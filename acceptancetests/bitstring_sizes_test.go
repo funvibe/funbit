@@ -354,14 +354,14 @@ func TestBitstringSizes_SizeValidation(t *testing.T) {
 			value:       256,
 			size:        8,
 			expectError: true,
-			errorMsg:    "overflow",
+			errorMsg:    "unsigned overflow",
 		},
 		{
 			name:        "Negative value too large for size",
 			value:       -129,
 			size:        8,
 			expectError: true,
-			errorMsg:    "overflow",
+			errorMsg:    "signed overflow",
 		},
 	}
 

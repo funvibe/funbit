@@ -121,11 +121,14 @@ func (m *Matcher) matchSegment(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 
 // matchInteger matches an integer segment against the bitstring
 func (m *Matcher) matchInteger(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (*bitstringpkg.SegmentResult, uint, error) {
+	// Use default size if not specified
+	var size uint
 	if !segment.SizeSpecified {
-		return nil, 0, errors.New("integer segment must have size specified")
+		size = bitstringpkg.DefaultSizeInteger
+	} else {
+		size = segment.Size
 	}
 
-	size := segment.Size
 	if size == 0 || size > 64 {
 		return nil, 0, fmt.Errorf("invalid integer size: %d bits", size)
 	}
@@ -136,7 +139,7 @@ func (m *Matcher) matchInteger(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 	}
 
 	// Extract the integer value
-	value, err := m.extractInteger(bs, offset, size, segment.Endianness)
+	value, err := m.extractInteger(bs, offset, size, segment.Endianness, segment.Signed)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to extract integer: %v", err)
 	}
@@ -294,7 +297,7 @@ func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg
 	}
 
 	// Bitstring segments are always extracted as big-endian unsigned integers.
-	value, err := extractIntegerBits(bs.ToBytes(), offset, size)
+	value, err := extractIntegerBits(bs.ToBytes(), offset, size, false) // bitstring is always unsigned
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to extract bitstring: %v", err)
 	}
@@ -532,14 +535,14 @@ func (m *Matcher) bindBinaryValue(variable interface{}, value []byte) error {
 }
 
 // extractInteger extracts an integer value from the bitstring
-func (m *Matcher) extractInteger(bs *bitstringpkg.BitString, offset, size uint, endiannessStr string) (int64, error) {
+func (m *Matcher) extractInteger(bs *bitstringpkg.BitString, offset, size uint, endiannessStr string, signed bool) (int64, error) {
 	data := bs.ToBytes()
 	byteOffset := offset / 8
 	bitOffset := offset % 8
 
 	// Handle bit-level extraction
 	if bitOffset != 0 || size%8 != 0 {
-		return extractIntegerBits(data, offset, size)
+		return extractIntegerBits(data, offset, size, signed)
 	}
 
 	// Handle byte-aligned extraction
@@ -552,18 +555,18 @@ func (m *Matcher) extractInteger(bs *bitstringpkg.BitString, offset, size uint, 
 
 	switch endiannessStr {
 	case bitstringpkg.EndiannessBig, "":
-		return m.bytesToInt64BigEndian(extractedData)
+		return m.bytesToInt64BigEndian(extractedData, signed, size)
 	case bitstringpkg.EndiannessLittle:
-		return m.bytesToInt64LittleEndian(extractedData)
+		return m.bytesToInt64LittleEndian(extractedData, signed, size)
 	case bitstringpkg.EndiannessNative:
-		return m.bytesToInt64Native(extractedData)
+		return m.bytesToInt64Native(extractedData, signed, size)
 	default:
 		return 0, fmt.Errorf("unsupported endianness: %s", endiannessStr)
 	}
 }
 
 // extractIntegerBits extracts an integer value from a non-byte-aligned position.
-func extractIntegerBits(data []byte, startBit, numBits uint) (int64, error) {
+func extractIntegerBits(data []byte, startBit, numBits uint, signed bool) (int64, error) {
 	if startBit+numBits > uint(len(data))*8 {
 		return 0, fmt.Errorf("cannot extract %d bits starting from bit %d", numBits, startBit)
 	}
@@ -584,61 +587,158 @@ func extractIntegerBits(data []byte, startBit, numBits uint) (int64, error) {
 		value = (value << 1) | uint64(bit)
 	}
 
+	// Handle signed interpretation
+	if signed && numBits > 0 {
+		// Check if the MSB is set (indicating a negative number in two's complement)
+		msb := uint64(1) << (numBits - 1)
+		if value&msb != 0 {
+			// Sign extend: set all bits above the MSB to 1
+			mask := ^(msb - 1)
+			value |= mask
+		}
+	}
+
 	return int64(value), nil
 }
 
 // bytesToInt64BigEndian converts bytes to int64 in big-endian format
-func (m *Matcher) bytesToInt64BigEndian(data []byte) (int64, error) {
-	var result int64 = 0
+func (m *Matcher) bytesToInt64BigEndian(data []byte, signed bool, size uint) (int64, error) {
+	var result uint64 = 0
 
 	for _, b := range data {
-		result = (result << 8) | int64(b)
+		result = (result << 8) | uint64(b)
 	}
 
-	return result, nil
+	// Handle signed interpretation
+	if signed && size > 0 {
+		// Check if the MSB is set (indicating a negative number in two's complement)
+		msb := uint64(1) << (size - 1)
+		if result&msb != 0 {
+			// Sign extend: set all bits above the MSB to 1
+			mask := ^(msb - 1)
+			result |= mask
+		}
+	}
+
+	return int64(result), nil
 }
 
 // bytesToInt64LittleEndian converts bytes to int64 in little-endian format
-func (m *Matcher) bytesToInt64LittleEndian(data []byte) (int64, error) {
-	var result int64 = 0
+func (m *Matcher) bytesToInt64LittleEndian(data []byte, signed bool, size uint) (int64, error) {
+	var result uint64 = 0
 
 	for i := len(data) - 1; i >= 0; i-- {
-		result = (result << 8) | int64(data[i])
+		result = (result << 8) | uint64(data[i])
 	}
 
-	return result, nil
+	// Handle signed interpretation
+	if signed && size > 0 {
+		// Check if the MSB is set (indicating a negative number in two's complement)
+		msb := uint64(1) << (size - 1)
+		if result&msb != 0 {
+			// Sign extend: set all bits above the MSB to 1
+			mask := ^(msb - 1)
+			result |= mask
+		}
+	}
+
+	return int64(result), nil
 }
 
 // bytesToInt64Native converts bytes to int64 in native endianness format
-func (m *Matcher) bytesToInt64Native(data []byte) (int64, error) {
+func (m *Matcher) bytesToInt64Native(data []byte, signed bool, size uint) (int64, error) {
 	if endianness.GetNativeEndianness() == "little" {
 		switch len(data) {
 		case 1:
-			return int64(data[0]), nil
+			result := uint64(data[0])
+			if signed && size > 0 {
+				msb := uint64(1) << (size - 1)
+				if result&msb != 0 {
+					mask := ^(msb - 1)
+					result |= mask
+				}
+			}
+			return int64(result), nil
 		case 2:
-			return int64(binary.LittleEndian.Uint16(data)), nil
+			result := uint64(binary.LittleEndian.Uint16(data))
+			if signed && size > 0 {
+				msb := uint64(1) << (size - 1)
+				if result&msb != 0 {
+					mask := ^(msb - 1)
+					result |= mask
+				}
+			}
+			return int64(result), nil
 		case 4:
-			return int64(binary.LittleEndian.Uint32(data)), nil
+			result := uint64(binary.LittleEndian.Uint32(data))
+			if signed && size > 0 {
+				msb := uint64(1) << (size - 1)
+				if result&msb != 0 {
+					mask := ^(msb - 1)
+					result |= mask
+				}
+			}
+			return int64(result), nil
 		case 8:
-			return int64(binary.LittleEndian.Uint64(data)), nil
+			result := binary.LittleEndian.Uint64(data)
+			if signed && size > 0 {
+				msb := uint64(1) << (size - 1)
+				if result&msb != 0 {
+					mask := ^(msb - 1)
+					result |= mask
+				}
+			}
+			return int64(result), nil
 		default:
 			// Fall back to little-endian for unusual sizes
-			return m.bytesToInt64LittleEndian(data)
+			return m.bytesToInt64LittleEndian(data, signed, size)
 		}
 	} else {
 		// Big-endian system
 		switch len(data) {
 		case 1:
-			return int64(data[0]), nil
+			result := uint64(data[0])
+			if signed && size > 0 {
+				msb := uint64(1) << (size - 1)
+				if result&msb != 0 {
+					mask := ^(msb - 1)
+					result |= mask
+				}
+			}
+			return int64(result), nil
 		case 2:
-			return int64(binary.BigEndian.Uint16(data)), nil
+			result := uint64(binary.BigEndian.Uint16(data))
+			if signed && size > 0 {
+				msb := uint64(1) << (size - 1)
+				if result&msb != 0 {
+					mask := ^(msb - 1)
+					result |= mask
+				}
+			}
+			return int64(result), nil
 		case 4:
-			return int64(binary.BigEndian.Uint32(data)), nil
+			result := uint64(binary.BigEndian.Uint32(data))
+			if signed && size > 0 {
+				msb := uint64(1) << (size - 1)
+				if result&msb != 0 {
+					mask := ^(msb - 1)
+					result |= mask
+				}
+			}
+			return int64(result), nil
 		case 8:
-			return int64(binary.BigEndian.Uint64(data)), nil
+			result := binary.BigEndian.Uint64(data)
+			if signed && size > 0 {
+				msb := uint64(1) << (size - 1)
+				if result&msb != 0 {
+					mask := ^(msb - 1)
+					result |= mask
+				}
+			}
+			return int64(result), nil
 		default:
 			// Fall back to big-endian for unusual sizes
-			return m.bytesToInt64BigEndian(data)
+			return m.bytesToInt64BigEndian(data, signed, size)
 		}
 	}
 }

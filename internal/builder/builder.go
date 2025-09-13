@@ -95,6 +95,16 @@ func (b *Builder) AddInteger(value interface{}, options ...bitstring.SegmentOpti
 		segment.SizeSpecified = false
 	}
 
+	// Auto-detect signedness if not explicitly set
+	if !segment.Signed {
+		// Check if value is negative
+		if val := reflect.ValueOf(value); val.Kind() >= reflect.Int && val.Kind() <= reflect.Int64 {
+			if val.Int() < 0 {
+				segment.Signed = true
+			}
+		}
+	}
+
 	b.segments = append(b.segments, segment)
 	return b
 }
@@ -207,10 +217,14 @@ func toUint64(v interface{}) (uint64, error) {
 // This handles both 'integer' and 'bitstring' types, as they only differ in alignment semantics,
 // which is handled by other segment types like binary.
 func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
+	// Use default size if not specified
+	var size uint
 	if !segment.SizeSpecified {
-		return errors.New("integer segment must have size specified")
+		size = bitstring.DefaultSizeInteger
+	} else {
+		size = segment.Size
 	}
-	size := segment.Size
+
 	if size == 0 {
 		return errors.New("size must be positive")
 	}
@@ -223,21 +237,42 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 		return err
 	}
 
-	// Check for overflow - if the value doesn't fit in the specified size
+	// Check for overflow based on signedness
 	if size < 64 {
-		maxValue := uint64(1) << size
-		if value >= maxValue {
-			return errors.New("overflow")
-		}
-	}
+		if segment.Signed {
+			// For signed integers, check range: -2^(size-1) to 2^(size-1)-1
+			if val := reflect.ValueOf(segment.Value); val.Kind() >= reflect.Int && val.Kind() <= reflect.Int64 {
+				intValue := val.Int()
+				minSigned := int64(-1) << (size - 1)
+				maxSigned := int64(1) << (size - 1)
+				maxSigned-- // 2^(size-1) - 1
 
-	// Check for signed overflow if the value is negative
-	if val := reflect.ValueOf(segment.Value); val.Kind() >= reflect.Int && val.Kind() <= reflect.Int64 {
-		intValue := val.Int()
-		if intValue < 0 {
-			maxSigned := int64(1) << (size - 1)
-			if intValue < -maxSigned {
-				return errors.New("overflow")
+				if intValue < minSigned || intValue > maxSigned {
+					return errors.New("signed overflow")
+				}
+			} else if val.Kind() >= reflect.Uint && val.Kind() <= reflect.Uint64 {
+				// Unsigned value being encoded as signed - check positive range
+				uintValue := val.Uint()
+				maxSigned := uint64(1) << (size - 1)
+				maxSigned-- // 2^(size-1) - 1
+
+				if uintValue > maxSigned {
+					return errors.New("signed overflow")
+				}
+			}
+		} else {
+			// For unsigned integers, check range: 0 to 2^size-1
+			maxValue := uint64(1) << size
+			if value >= maxValue {
+				return errors.New("unsigned overflow")
+			}
+
+			// Also check if signed value is being encoded as unsigned
+			if val := reflect.ValueOf(segment.Value); val.Kind() >= reflect.Int && val.Kind() <= reflect.Int64 {
+				intValue := val.Int()
+				if intValue < 0 {
+					return errors.New("cannot encode negative value as unsigned")
+				}
 			}
 		}
 	}
@@ -266,8 +301,30 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 
 	// Truncate to the least significant bits, as per Erlang spec.
 	if size < 64 {
-		mask := (uint64(1) << size) - 1
-		value &= mask
+		if segment.Signed {
+			// For signed integers, we need to handle two's complement properly
+			// Convert negative values to their two's complement representation
+			if val := reflect.ValueOf(segment.Value); val.Kind() >= reflect.Int && val.Kind() <= reflect.Int64 {
+				intValue := val.Int()
+				if intValue < 0 {
+					// Convert negative to two's complement
+					mask := uint64(1) << size
+					value = uint64(intValue) & (mask - 1)
+				} else {
+					// Positive values just get truncated
+					mask := (uint64(1) << size) - 1
+					value &= mask
+				}
+			} else {
+				// Unsigned values just get truncated
+				mask := (uint64(1) << size) - 1
+				value &= mask
+			}
+		} else {
+			// For unsigned integers, simple truncation
+			mask := (uint64(1) << size) - 1
+			value &= mask
+		}
 	}
 
 	// Handle endianness for multi-byte values
