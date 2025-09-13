@@ -8,9 +8,10 @@ const (
 	TypeFloat     = "float"
 	TypeBinary    = "binary"
 	TypeBitstring = "bitstring"
-	TypeUTF8      = "utf8"
-	TypeUTF16     = "utf16"
-	TypeUTF32     = "utf32"
+	TypeUTF       = "utf"   // Generic UTF type
+	TypeUTF8      = "utf8"  // UTF-8 specific
+	TypeUTF16     = "utf16" // UTF-16 specific
+	TypeUTF32     = "utf32" // UTF-32 specific
 )
 
 // Endianness constants
@@ -32,6 +33,7 @@ const (
 	DefaultUnitFloat     = 1
 	DefaultUnitBinary    = 8
 	DefaultUnitBitstring = 1
+	DefaultUnitUTF       = 1
 )
 
 // Default size values for different types (in bits)
@@ -112,8 +114,14 @@ func getDefaultSizeForType(segmentType string) uint {
 		return DefaultSizeInteger
 	case TypeFloat:
 		return DefaultSizeFloat
+	case TypeUTF8:
+		return 8 // UTF-8 uses 8-bit encoding
+	case TypeUTF16:
+		return 16 // UTF-16 uses 16-bit encoding
+	case TypeUTF32:
+		return 32 // UTF-32 uses 32-bit encoding
 	default:
-		return 0 // no default size for binary/bitstring/utf types
+		return 0 // no default size for binary/bitstring types
 	}
 }
 
@@ -124,8 +132,10 @@ func getDefaultUnitForType(segmentType string) uint {
 		return DefaultUnitInteger
 	case TypeBinary:
 		return DefaultUnitBinary
+	case TypeUTF, TypeUTF8, TypeUTF16, TypeUTF32:
+		return DefaultUnitUTF
 	default:
-		return DefaultUnitInteger // default for utf types
+		return DefaultUnitInteger // default for unknown types
 	}
 }
 

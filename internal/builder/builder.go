@@ -10,6 +10,7 @@ import (
 
 	"github.com/funvibe/funbit/internal/bitstring"
 	"github.com/funvibe/funbit/internal/endianness"
+	"github.com/funvibe/funbit/internal/utf"
 )
 
 // Builder provides a fluent interface for constructing bitstrings
@@ -195,6 +196,8 @@ func encodeSegment(w *bitWriter, segment *bitstring.Segment) error {
 		return encodeFloat(w, segment)
 	case bitstring.TypeBinary:
 		return encodeBinary(w, segment)
+	case "utf8", "utf16", "utf32":
+		return encodeUTF(w, segment)
 	default:
 		return fmt.Errorf("unsupported segment type: %s", segment.Type)
 	}
@@ -460,4 +463,68 @@ func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 	}
 	_, err := w.writeBytes(buf)
 	return err
+}
+
+// encodeUTF encodes a UTF value into the writer
+func encodeUTF(w *bitWriter, segment *bitstring.Segment) error {
+	// For UTF types, size should not be specified according to spec
+	if segment.SizeSpecified {
+		return utf.ErrSizeSpecifiedForUTF
+	}
+
+	// Convert value to integer (code point)
+	var codePoint int
+	switch v := segment.Value.(type) {
+	case int:
+		codePoint = v
+	case int32:
+		codePoint = int(v)
+	case int64:
+		codePoint = int(v)
+	case uint:
+		codePoint = int(v)
+	case uint32:
+		codePoint = int(v)
+	case uint64:
+		codePoint = int(v)
+	default:
+		return fmt.Errorf("unsupported value type for UTF: %T", segment.Value)
+	}
+
+	// Get endianness (default big for utf16/utf32)
+	endiannessVal := segment.Endianness
+	if endiannessVal == "" {
+		endiannessVal = "big"
+	} else if endiannessVal == "native" {
+		endiannessVal = endianness.GetNativeEndianness()
+	}
+
+	// Encode based on UTF type
+	var encoded []byte
+	var err error
+
+	switch segment.Type {
+	case "utf8":
+		encoder := utf.NewUTF8Encoder()
+		encoded, err = encoder.Encode(codePoint)
+	case "utf16":
+		encoder := utf.NewUTF16Encoder()
+		encoded, err = encoder.Encode(codePoint, endiannessVal)
+	case "utf32":
+		encoder := utf.NewUTF32Encoder()
+		encoded, err = encoder.Encode(codePoint, endiannessVal)
+	default:
+		return fmt.Errorf("unsupported UTF type: %s", segment.Type)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// Write encoded bytes
+	for _, b := range encoded {
+		w.writeBits(uint64(b), 8)
+	}
+
+	return nil
 }

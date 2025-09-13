@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"unicode/utf8"
 
 	bitstringpkg "github.com/funvibe/funbit/internal/bitstring"
 	"github.com/funvibe/funbit/internal/endianness"
@@ -77,6 +78,28 @@ func (m *Matcher) Binary(variable interface{}, options ...bitstringpkg.SegmentOp
 	return m
 }
 
+// UTF adds a UTF segment to the matching pattern
+func (m *Matcher) UTF(variable interface{}, options ...bitstringpkg.SegmentOption) *Matcher {
+	segment := bitstringpkg.NewSegment(variable, options...)
+
+	// Only set TypeUTF if no specific UTF type was already set in options
+	if segment.Type == "" || segment.Type == bitstringpkg.TypeUTF {
+		segment.Type = bitstringpkg.TypeUTF
+	}
+
+	// Set default size if not specified (UTF-8 by default)
+	if !segment.SizeSpecified {
+		segment.Size = 8 // Default to UTF-8
+		segment.SizeSpecified = false
+	}
+
+	// Set default unit
+	segment.Unit = bitstringpkg.DefaultUnitUTF
+
+	m.pattern = append(m.pattern, segment)
+	return m
+}
+
 // Match attempts to match the pattern against the provided bitstring
 func (m *Matcher) Match(bitstring *bitstringpkg.BitString) ([]bitstringpkg.SegmentResult, error) {
 	if bitstring == nil {
@@ -114,6 +137,8 @@ func (m *Matcher) matchSegment(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 		return m.matchBinary(segment, bs, offset)
 	case bitstringpkg.TypeBitstring:
 		return m.matchBitstring(segment, bs, offset)
+	case bitstringpkg.TypeUTF, bitstringpkg.TypeUTF8, bitstringpkg.TypeUTF16, bitstringpkg.TypeUTF32:
+		return m.matchUTF(segment, bs, offset)
 	default:
 		return nil, 0, fmt.Errorf("unsupported segment type: %s", segment.Type)
 	}
@@ -322,6 +347,55 @@ func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg
 	}
 
 	return result, offset + size, nil
+}
+
+// matchUTF matches a UTF segment against the bitstring
+func (m *Matcher) matchUTF(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (*bitstringpkg.SegmentResult, uint, error) {
+	// Determine UTF encoding type
+	var utfType string
+
+	switch segment.Type {
+	case bitstringpkg.TypeUTF8:
+		utfType = "utf8"
+	case bitstringpkg.TypeUTF16:
+		utfType = "utf16"
+	case bitstringpkg.TypeUTF32:
+		utfType = "utf32"
+	case bitstringpkg.TypeUTF:
+		// Generic UTF, default to UTF-8
+		utfType = "utf8"
+	default:
+		return nil, 0, fmt.Errorf("unsupported UTF type: %s", segment.Type)
+	}
+
+	// For UTF, we need to extract the encoded data and decode it
+	// UTF encoding is variable-length, so we need to parse until we get a valid character
+	value, bytesConsumed, err := m.extractUTF(bs, offset, utfType, segment.Endianness)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to extract UTF: %v", err)
+	}
+
+	// Bind the value to the variable
+	if err := m.bindUTFValue(segment.Value, value); err != nil {
+		return nil, 0, fmt.Errorf("failed to bind UTF value: %v", err)
+	}
+
+	// Create remaining bitstring
+	var remaining *bitstringpkg.BitString
+	bitsConsumed := bytesConsumed * 8
+	if offset+bitsConsumed < bs.Length() {
+		remaining = m.extractRemainingBits(bs, offset+bitsConsumed)
+	} else {
+		remaining = bitstringpkg.NewBitString()
+	}
+
+	result := &bitstringpkg.SegmentResult{
+		Value:     value,
+		Matched:   true,
+		Remaining: remaining,
+	}
+
+	return result, offset + bitsConsumed, nil
 }
 
 // extractFloat extracts a float value from the bitstring
@@ -857,4 +931,202 @@ func (m *Matcher) extractRemainingBits(bs *bitstringpkg.BitString, offset uint) 
 	}
 
 	return bitstringpkg.NewBitStringFromBits(resultData, remainingSize)
+}
+
+// extractUTF extracts a UTF-encoded string from the bitstring
+func (m *Matcher) extractUTF(bs *bitstringpkg.BitString, offset uint, utfType, endianness string) (string, uint, error) {
+	data := bs.ToBytes()
+	byteOffset := offset / 8
+	bitOffset := offset % 8
+
+	// For UTF, we need byte-aligned data
+	if bitOffset != 0 {
+		return "", 0, fmt.Errorf("UTF data must be byte-aligned")
+	}
+
+	if byteOffset >= uint(len(data)) {
+		return "", 0, fmt.Errorf("insufficient data for UTF extraction")
+	}
+
+	remainingData := data[byteOffset:]
+
+	switch utfType {
+	case "utf8":
+		return m.extractUTF8(remainingData)
+	case "utf16":
+		return m.extractUTF16(remainingData, endianness)
+	case "utf32":
+		return m.extractUTF32(remainingData, endianness)
+	default:
+		return "", 0, fmt.Errorf("unsupported UTF type: %s", utfType)
+	}
+}
+
+// extractUTF8 extracts a UTF-8 encoded string from the data
+func (m *Matcher) extractUTF8(data []byte) (string, uint, error) {
+	if len(data) == 0 {
+		return "", 0, fmt.Errorf("no data for UTF-8 extraction")
+	}
+
+	// Use Go's utf8.DecodeRune to properly decode UTF-8 sequences
+	rune, size := utf8.DecodeRune(data)
+
+	if rune == utf8.RuneError && size == 1 {
+		// Check if it's a real error or just an incomplete sequence
+		if !utf8.FullRune(data) {
+			return "", 0, fmt.Errorf("incomplete UTF-8 sequence")
+		}
+		return "", 0, fmt.Errorf("invalid UTF-8 sequence")
+	}
+
+	if rune == utf8.RuneError {
+		return "", 0, fmt.Errorf("invalid UTF-8 sequence")
+	}
+
+	return string(rune), uint(size), nil
+}
+
+// extractUTF16 extracts a UTF-16 encoded string from the data
+func (m *Matcher) extractUTF16(data []byte, endiannessStr string) (string, uint, error) {
+	if len(data) < 2 {
+		return "", 0, fmt.Errorf("insufficient data for UTF-16 extraction")
+	}
+
+	// UTF-16 uses 2 bytes per code unit
+	bytesNeeded := 2
+	if len(data) < bytesNeeded {
+		return "", 0, fmt.Errorf("insufficient data for UTF-16 extraction")
+	}
+
+	// Extract the 16-bit value
+	var codeUnit uint16
+	switch endiannessStr {
+	case bitstringpkg.EndiannessBig, "":
+		codeUnit = binary.BigEndian.Uint16(data[:2])
+	case bitstringpkg.EndiannessLittle:
+		codeUnit = binary.LittleEndian.Uint16(data[:2])
+	case bitstringpkg.EndiannessNative:
+		if endianness.GetNativeEndianness() == "little" {
+			codeUnit = binary.LittleEndian.Uint16(data[:2])
+		} else {
+			codeUnit = binary.BigEndian.Uint16(data[:2])
+		}
+	default:
+		return "", 0, fmt.Errorf("unsupported endianness: %s", endiannessStr)
+	}
+
+	// Convert UTF-16 code unit to rune
+	// For now, handle only BMP (Basic Multilingual Plane) characters
+	if codeUnit >= 0xD800 && codeUnit <= 0xDFFF {
+		// Surrogate pair - need additional 2 bytes
+		if len(data) < 4 {
+			return "", 0, fmt.Errorf("incomplete surrogate pair in UTF-16")
+		}
+
+		var codeUnit2 uint16
+		switch endiannessStr {
+		case bitstringpkg.EndiannessBig, "":
+			codeUnit2 = binary.BigEndian.Uint16(data[2:4])
+		case bitstringpkg.EndiannessLittle:
+			codeUnit2 = binary.LittleEndian.Uint16(data[2:4])
+		case bitstringpkg.EndiannessNative:
+			if endianness.GetNativeEndianness() == "little" {
+				codeUnit2 = binary.LittleEndian.Uint16(data[2:4])
+			} else {
+				codeUnit2 = binary.BigEndian.Uint16(data[2:4])
+			}
+		}
+
+		// Convert surrogate pair to code point
+		if codeUnit >= 0xD800 && codeUnit <= 0xDBFF &&
+			codeUnit2 >= 0xDC00 && codeUnit2 <= 0xDFFF {
+			high := uint32(codeUnit - 0xD800)
+			low := uint32(codeUnit2 - 0xDC00)
+			codePoint := (high << 10) + low + 0x10000
+
+			// Validate the resulting code point is within valid Unicode range
+			if codePoint > 0x10FFFF || !utf8.ValidRune(rune(codePoint)) {
+				return "", 0, fmt.Errorf("invalid Unicode code point: %x", codePoint)
+			}
+
+			return string(rune(codePoint)), 4, nil
+		}
+
+		return "", 0, fmt.Errorf("invalid surrogate pair in UTF-16")
+	}
+
+	// Single code unit from BMP
+	if !utf8.ValidRune(rune(codeUnit)) {
+		return "", 0, fmt.Errorf("invalid Unicode code point: %x", codeUnit)
+	}
+
+	return string(rune(codeUnit)), 2, nil
+}
+
+// extractUTF32 extracts a UTF-32 encoded string from the data
+func (m *Matcher) extractUTF32(data []byte, endiannessStr string) (string, uint, error) {
+	if len(data) < 4 {
+		return "", 0, fmt.Errorf("insufficient data for UTF-32 extraction")
+	}
+
+	// UTF-32 uses 4 bytes per code point
+	var codePoint uint32
+	switch endiannessStr {
+	case bitstringpkg.EndiannessBig, "":
+		codePoint = binary.BigEndian.Uint32(data[:4])
+	case bitstringpkg.EndiannessLittle:
+		codePoint = binary.LittleEndian.Uint32(data[:4])
+	case bitstringpkg.EndiannessNative:
+		if endianness.GetNativeEndianness() == "little" {
+			codePoint = binary.LittleEndian.Uint32(data[:4])
+		} else {
+			codePoint = binary.BigEndian.Uint32(data[:4])
+		}
+	default:
+		return "", 0, fmt.Errorf("unsupported endianness: %s", endiannessStr)
+	}
+
+	// Validate the code point
+	if codePoint > 0x10FFFF || (codePoint >= 0xD800 && codePoint <= 0xDFFF) {
+		return "", 0, fmt.Errorf("invalid Unicode code point: %x", codePoint)
+	}
+
+	if !utf8.ValidRune(rune(codePoint)) {
+		return "", 0, fmt.Errorf("invalid Unicode code point: %x", codePoint)
+	}
+
+	return string(rune(codePoint)), 4, nil
+}
+
+// bindUTFValue binds the extracted UTF value to the variable
+func (m *Matcher) bindUTFValue(variable interface{}, value string) error {
+	if variable == nil {
+		return errors.New("variable cannot be nil")
+	}
+
+	// Use reflection to set the value
+	val := reflect.ValueOf(variable)
+
+	// Check if it's a pointer
+	if val.Kind() != reflect.Ptr {
+		return errors.New("variable must be a pointer")
+	}
+
+	// Dereference the pointer
+	val = val.Elem()
+
+	// Check if it's settable
+	if !val.CanSet() {
+		return errors.New("variable is not settable")
+	}
+
+	// Set the value based on the type
+	switch val.Kind() {
+	case reflect.String:
+		val.SetString(value)
+	default:
+		return fmt.Errorf("unsupported UTF variable type: %v", val.Kind())
+	}
+
+	return nil
 }
