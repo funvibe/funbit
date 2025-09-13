@@ -46,7 +46,8 @@ type SegmentOption func(*Segment)
 // WithSize sets the size for a segment
 func WithSize(size uint) SegmentOption {
 	return func(s *Segment) {
-		s.Size = &size
+		s.Size = size
+		s.SizeSpecified = true
 	}
 }
 
@@ -93,9 +94,9 @@ func NewSegment(value interface{}, options ...SegmentOption) *Segment {
 	}
 
 	// Set default size based on type if not specified
-	if segment.Size == nil {
-		defaultSize := getDefaultSizeForType(segment.Type)
-		segment.Size = &defaultSize
+	if !segment.SizeSpecified {
+		segment.Size = getDefaultSizeForType(segment.Type)
+		segment.SizeSpecified = false
 	}
 
 	// Set default unit based on type
@@ -171,14 +172,14 @@ func ValidateSegment(segment *Segment) error {
 	// Type-specific validations
 	switch segment.Type {
 	case TypeFloat:
-		if segment.Size != nil && (*segment.Size != 16 && *segment.Size != 32 && *segment.Size != 64) {
+		if segment.SizeSpecified && (segment.Size != 16 && segment.Size != 32 && segment.Size != 64) {
 			return &BitStringError{
 				Code:    "INVALID_FLOAT_SIZE",
 				Message: "float size must be 16, 32, or 64 bits",
 			}
 		}
 	case TypeUTF8, TypeUTF16, TypeUTF32:
-		if segment.Size != nil {
+		if segment.SizeSpecified {
 			return &BitStringError{
 				Code:    "UTF_SIZE_SPECIFIED",
 				Message: "UTF types cannot have size specified",

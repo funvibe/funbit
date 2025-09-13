@@ -2,6 +2,8 @@ package builder
 
 import (
 	"testing"
+
+	"github.com/funvibe/funbit/internal/bitstring"
 )
 
 func TestBuilder_NewBuilder(t *testing.T) {
@@ -16,16 +18,16 @@ func TestBuilder_AddInteger(t *testing.T) {
 	b := NewBuilder()
 
 	// Test that AddInteger returns the builder for chaining
-	result := b.AddInteger(42)
+	result := b.AddInteger(42, bitstring.WithSize(8))
 	if result != b {
 		t.Error("Expected AddInteger() to return the same builder instance")
 	}
 
 	// Test multiple additions for chaining
 	b2 := b.
-		AddInteger(1).
-		AddInteger(17).
-		AddInteger(42)
+		AddInteger(1, bitstring.WithSize(8)).
+		AddInteger(17, bitstring.WithSize(8)).
+		AddInteger(42, bitstring.WithSize(8))
 
 	if b2 != b {
 		t.Error("Expected chaining to work correctly")
@@ -48,14 +50,14 @@ func TestBuilder_Build(t *testing.T) {
 		{
 			name: "single integer",
 			setup: func(b *Builder) {
-				b.AddInteger(42)
+				b.AddInteger(42, bitstring.WithSize(8))
 			},
 			wantErr: false,
 		},
 		{
 			name: "multiple integers",
 			setup: func(b *Builder) {
-				b.AddInteger(1).AddInteger(17).AddInteger(42)
+				b.AddInteger(1, bitstring.WithSize(8)).AddInteger(17, bitstring.WithSize(8)).AddInteger(42, bitstring.WithSize(8))
 			},
 			wantErr: false,
 		},
@@ -102,9 +104,9 @@ func TestBuilder_Build(t *testing.T) {
 func TestBuilder_BuildContent(t *testing.T) {
 	// Test specific content generation
 	b := NewBuilder().
-		AddInteger(1).
-		AddInteger(17).
-		AddInteger(42)
+		AddInteger(1, bitstring.WithSize(8)).
+		AddInteger(17, bitstring.WithSize(8)).
+		AddInteger(42, bitstring.WithSize(8))
 
 	bs, err := b.Build()
 

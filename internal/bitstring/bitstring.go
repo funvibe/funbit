@@ -9,12 +9,13 @@ type BitString struct {
 
 // Segment represents a single segment in bitstring construction/matching
 type Segment struct {
-	Value      interface{}
-	Size       *uint
-	Type       string
-	Signed     bool
-	Endianness string
-	Unit       uint
+	Value         interface{}
+	Size          uint
+	SizeSpecified bool // Flag to indicate if size was explicitly specified
+	Type          string
+	Signed        bool
+	Endianness    string
+	Unit          uint
 }
 
 // SegmentResult represents result of segment matching

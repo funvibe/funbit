@@ -73,9 +73,9 @@ func TestBasicBitStringConstruction(t *testing.T) {
 func TestBasicBuilderConstruction(t *testing.T) {
 	// Test simple construction
 	bs, err := builder.NewBuilder().
-		AddInteger(1).
-		AddInteger(17).
-		AddInteger(42).
+		AddInteger(1, bitstringpkg.WithSize(8)).
+		AddInteger(17, bitstringpkg.WithSize(8)).
+		AddInteger(42, bitstringpkg.WithSize(8)).
 		Build()
 
 	if err != nil {
@@ -105,9 +105,9 @@ func TestBasicPatternMatching(t *testing.T) {
 
 	// Test simple matching
 	results, err := matcher.NewMatcher().
-		Integer(&a).
-		Integer(&b).
-		Integer(&c).
+		Integer(&a, bitstringpkg.WithSize(8)).
+		Integer(&b, bitstringpkg.WithSize(8)).
+		Integer(&c, bitstringpkg.WithSize(8)).
 		Match(bs)
 
 	if err != nil {
