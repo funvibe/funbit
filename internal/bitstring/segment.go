@@ -81,6 +81,24 @@ func WithUnit(unit uint) SegmentOption {
 	}
 }
 
+// WithDynamicSize sets the size for a segment using a variable reference
+func WithDynamicSize(sizeVar *uint) SegmentOption {
+	return func(s *Segment) {
+		s.DynamicSize = sizeVar
+		s.IsDynamic = true
+		s.SizeSpecified = false // Dynamic size overrides explicit size
+	}
+}
+
+// WithDynamicSizeExpression sets the size for a segment using an expression
+func WithDynamicSizeExpression(expr string) SegmentOption {
+	return func(s *Segment) {
+		s.DynamicExpr = expr
+		s.IsDynamic = true
+		s.SizeSpecified = false // Dynamic size overrides explicit size
+	}
+}
+
 // NewSegment creates a new segment with the given value and options
 func NewSegment(value interface{}, options ...SegmentOption) *Segment {
 	segment := &Segment{
@@ -89,6 +107,7 @@ func NewSegment(value interface{}, options ...SegmentOption) *Segment {
 		Signed:     Unsigned,           // default signedness
 		Endianness: EndiannessBig,      // default endianness
 		Unit:       DefaultUnitInteger, // default unit
+		IsDynamic:  false,              // default to static size
 	}
 
 	for _, option := range options {
@@ -101,8 +120,11 @@ func NewSegment(value interface{}, options ...SegmentOption) *Segment {
 		segment.SizeSpecified = false
 	}
 
-	// Set default unit based on type
-	segment.Unit = getDefaultUnitForType(segment.Type)
+	// Set default unit based on type only if not already set
+	if segment.Unit == DefaultUnitInteger {
+		// Only set default if unit is still the initial value
+		segment.Unit = getDefaultUnitForType(segment.Type)
+	}
 
 	return segment
 }

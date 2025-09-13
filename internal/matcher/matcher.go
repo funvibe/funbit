@@ -14,13 +14,15 @@ import (
 
 // Matcher provides a fluent interface for pattern matching against bitstrings
 type Matcher struct {
-	pattern []*bitstringpkg.Segment
+	pattern   []*bitstringpkg.Segment
+	variables map[string]interface{} // Map to store variable names and their pointers
 }
 
 // NewMatcher creates a new matcher instance
 func NewMatcher() *Matcher {
 	return &Matcher{
-		pattern: []*bitstringpkg.Segment{},
+		pattern:   []*bitstringpkg.Segment{},
+		variables: make(map[string]interface{}),
 	}
 }
 
@@ -71,8 +73,11 @@ func (m *Matcher) Binary(variable interface{}, options ...bitstringpkg.SegmentOp
 		// We'll handle this during matching
 	}
 
-	// Set default unit
-	segment.Unit = bitstringpkg.DefaultUnitBinary
+	// Set default unit for binary segments if not explicitly set
+	// Check if unit is still the default initial value (1) from NewSegment
+	if segment.Unit == 1 {
+		segment.Unit = bitstringpkg.DefaultUnitBinary
+	}
 
 	m.pattern = append(m.pattern, segment)
 	return m
@@ -100,6 +105,12 @@ func (m *Matcher) UTF(variable interface{}, options ...bitstringpkg.SegmentOptio
 	return m
 }
 
+// RegisterVariable registers a variable with a specific name for dynamic size usage
+func (m *Matcher) RegisterVariable(name string, variable interface{}) *Matcher {
+	m.variables[name] = variable
+	return m
+}
+
 // Match attempts to match the pattern against the provided bitstring
 func (m *Matcher) Match(bitstring *bitstringpkg.BitString) ([]bitstringpkg.SegmentResult, error) {
 	if bitstring == nil {
@@ -108,19 +119,23 @@ func (m *Matcher) Match(bitstring *bitstringpkg.BitString) ([]bitstringpkg.Segme
 
 	results := make([]bitstringpkg.SegmentResult, len(m.pattern))
 	currentOffset := uint(0)
+	context := NewDynamicSizeContext()
 
 	for i, segment := range m.pattern {
 		if err := bitstringpkg.ValidateSegment(segment); err != nil {
 			return nil, fmt.Errorf("invalid segment %d: %v", i, err)
 		}
 
-		result, newOffset, err := m.matchSegment(segment, bitstring, currentOffset)
+		result, newOffset, err := m.matchSegmentWithContext(segment, bitstring, currentOffset, context, results)
 		if err != nil {
 			return nil, fmt.Errorf("failed to match segment %d: %v", i, err)
 		}
 
 		results[i] = *result
 		currentOffset = newOffset
+
+		// Update context with the matched variable value
+		m.updateContextWithResult(context, segment, result)
 	}
 
 	return results, nil
@@ -128,6 +143,31 @@ func (m *Matcher) Match(bitstring *bitstringpkg.BitString) ([]bitstringpkg.Segme
 
 // matchSegment matches a single segment against the bitstring at the given offset
 func (m *Matcher) matchSegment(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (*bitstringpkg.SegmentResult, uint, error) {
+	return m.matchSegmentWithContext(segment, bs, offset, NewDynamicSizeContext(), nil)
+}
+
+// matchSegmentWithContext matches a single segment with dynamic size context
+func (m *Matcher) matchSegmentWithContext(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint, context *DynamicSizeContext, previousResults []bitstringpkg.SegmentResult) (*bitstringpkg.SegmentResult, uint, error) {
+	// Evaluate dynamic size if needed
+	if segment.IsDynamic {
+		evaluatedSize, err := m.EvaluateDynamicSize(segment, context)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to evaluate dynamic size: %v", err)
+		}
+		// Create a copy of the segment with the evaluated size
+		segmentCopy := *segment
+		segmentCopy.Size = evaluatedSize
+		segmentCopy.SizeSpecified = true
+
+		// Apply unit conversion for dynamic sizes
+		if segmentCopy.Type == bitstringpkg.TypeBinary {
+			// Convert from units to bits
+			segmentCopy.Size = segmentCopy.Size * segmentCopy.Unit
+		}
+
+		segment = &segmentCopy
+	}
+
 	switch segment.Type {
 	case bitstringpkg.TypeInteger:
 		return m.matchInteger(segment, bs, offset)
@@ -142,6 +182,76 @@ func (m *Matcher) matchSegment(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 	default:
 		return nil, 0, fmt.Errorf("unsupported segment type: %s", segment.Type)
 	}
+}
+
+// updateContextWithResult updates the dynamic size context with a matched result
+func (m *Matcher) updateContextWithResult(context *DynamicSizeContext, segment *bitstringpkg.Segment, result *bitstringpkg.SegmentResult) {
+	if !result.Matched {
+		return
+	}
+
+	// Extract variable name and value
+	varName := m.getVariableNameFromSegment(segment)
+	if varName == "" {
+		return
+	}
+
+	// Convert result value to uint
+	var value uint
+	switch v := result.Value.(type) {
+	case int:
+		value = uint(v)
+	case int8:
+		value = uint(v)
+	case int16:
+		value = uint(v)
+	case int32:
+		value = uint(v)
+	case int64:
+		value = uint(v)
+	case uint:
+		value = v
+	case uint8:
+		value = uint(v)
+	case uint16:
+		value = uint(v)
+	case uint32:
+		value = uint(v)
+	case uint64:
+		value = uint(v)
+	default:
+		// Skip non-integer types
+		return
+	}
+
+	context.AddVariable(varName, value)
+}
+
+// getVariableNameFromSegment extracts variable name from segment value
+func (m *Matcher) getVariableNameFromSegment(segment *bitstringpkg.Segment) string {
+	if segment.Value == nil {
+		return ""
+	}
+
+	// Look up the variable name in the registered variables map
+	for name, variable := range m.variables {
+		if variable == segment.Value {
+			return name
+		}
+	}
+
+	// If not found, try to extract from DynamicSize field
+	if segment.DynamicSize != nil {
+		// Look for the variable pointer in the registered variables
+		for name, variable := range m.variables {
+			if ptr, ok := variable.(*uint); ok && ptr == segment.DynamicSize {
+				return name
+			}
+		}
+	}
+
+	// If still not found, return empty string
+	return ""
 }
 
 // matchInteger matches an integer segment against the bitstring
@@ -260,7 +370,8 @@ func (m *Matcher) matchBinary(segment *bitstringpkg.Segment, bs *bitstringpkg.Bi
 	} else {
 		size = segment.Size
 		// For binary type, if size is specified in bytes (unit=8), convert to bits
-		if segment.Unit == 8 {
+		// But NOT for dynamic sizes - they are already converted in matchSegmentWithContext
+		if !segment.IsDynamic && segment.Unit == 8 {
 			size = size * 8
 		}
 		if size == 0 {

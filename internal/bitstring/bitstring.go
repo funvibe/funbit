@@ -16,6 +16,9 @@ type Segment struct {
 	Signed        bool
 	Endianness    string
 	Unit          uint
+	DynamicSize   *uint  // Pointer to variable for dynamic size
+	DynamicExpr   string // Expression for dynamic size calculation
+	IsDynamic     bool   // Flag to indicate if size is dynamic
 }
 
 // SegmentResult represents result of segment matching
