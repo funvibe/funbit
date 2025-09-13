@@ -9,6 +9,7 @@ import (
 	"reflect"
 
 	"github.com/funvibe/funbit/internal/bitstring"
+	"github.com/funvibe/funbit/internal/endianness"
 )
 
 // Builder provides a fluent interface for constructing bitstrings
@@ -269,6 +270,46 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 		value &= mask
 	}
 
+	// Handle endianness for multi-byte values
+	if size >= 8 && segment.Endianness != "" {
+		// For sizes that are multiples of 8 bits (full bytes), handle endianness
+		if size%8 == 0 {
+			// Create byte representation in big-endian order
+			byteSize := size / 8
+			bytes := make([]byte, byteSize)
+
+			// Fill bytes in big-endian order
+			for i := uint(0); i < byteSize; i++ {
+				shift := (byteSize - 1 - i) * 8
+				bytes[i] = byte((value >> shift) & 0xFF)
+			}
+
+			// Convert endianness if needed
+			if segment.Endianness == bitstring.EndiannessLittle {
+				// Reverse bytes for little-endian
+				for i, j := uint(0), byteSize-1; i < j; i, j = i+1, j-1 {
+					bytes[i], bytes[j] = bytes[j], bytes[i]
+				}
+			} else if segment.Endianness == bitstring.EndiannessNative {
+				// Handle native endianness
+				if endianness.GetNativeEndianness() == "little" {
+					// Reverse bytes for little-endian systems
+					for i, j := uint(0), byteSize-1; i < j; i, j = i+1, j-1 {
+						bytes[i], bytes[j] = bytes[j], bytes[i]
+					}
+				}
+				// For big-endian systems, bytes are already in correct order
+			}
+
+			// Write bytes using bit writer to maintain alignment
+			for _, b := range bytes {
+				w.writeBits(uint64(b), 8)
+			}
+			return nil
+		}
+	}
+
+	// For non-byte-aligned sizes or default big-endian, write as bits
 	w.writeBits(value, size)
 	return nil
 }
@@ -337,6 +378,12 @@ func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 		bits := math.Float32bits(float32(value))
 		if segment.Endianness == bitstring.EndiannessLittle {
 			binary.LittleEndian.PutUint32(buf, bits)
+		} else if segment.Endianness == bitstring.EndiannessNative {
+			if endianness.GetNativeEndianness() == "little" {
+				binary.LittleEndian.PutUint32(buf, bits)
+			} else {
+				binary.BigEndian.PutUint32(buf, bits)
+			}
 		} else {
 			binary.BigEndian.PutUint32(buf, bits)
 		}
@@ -344,6 +391,12 @@ func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 		bits := math.Float64bits(value)
 		if segment.Endianness == bitstring.EndiannessLittle {
 			binary.LittleEndian.PutUint64(buf, bits)
+		} else if segment.Endianness == bitstring.EndiannessNative {
+			if endianness.GetNativeEndianness() == "little" {
+				binary.LittleEndian.PutUint64(buf, bits)
+			} else {
+				binary.BigEndian.PutUint64(buf, bits)
+			}
 		} else {
 			binary.BigEndian.PutUint64(buf, bits)
 		}

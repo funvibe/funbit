@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	bitstringpkg "github.com/funvibe/funbit/internal/bitstring"
+	"github.com/funvibe/funbit/internal/endianness"
 )
 
 // Matcher provides a fluent interface for pattern matching against bitstrings
@@ -321,7 +322,7 @@ func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg
 }
 
 // extractFloat extracts a float value from the bitstring
-func (m *Matcher) extractFloat(bs *bitstringpkg.BitString, offset, size uint, endianness string) (float64, error) {
+func (m *Matcher) extractFloat(bs *bitstringpkg.BitString, offset, size uint, endiannessStr string) (float64, error) {
 	data := bs.ToBytes()
 	byteOffset := offset / 8
 	bitOffset := offset % 8
@@ -342,43 +343,55 @@ func (m *Matcher) extractFloat(bs *bitstringpkg.BitString, offset, size uint, en
 	case 16:
 		// 16-bit float (half precision)
 		var bits uint16
-		switch endianness {
+		switch endiannessStr {
 		case bitstringpkg.EndiannessBig, "":
 			bits = binary.BigEndian.Uint16(extractedData)
 		case bitstringpkg.EndiannessLittle:
 			bits = binary.LittleEndian.Uint16(extractedData)
 		case bitstringpkg.EndiannessNative:
-			bits = binary.LittleEndian.Uint16(extractedData)
+			if endianness.GetNativeEndianness() == "little" {
+				bits = binary.LittleEndian.Uint16(extractedData)
+			} else {
+				bits = binary.BigEndian.Uint16(extractedData)
+			}
 		default:
-			return 0, fmt.Errorf("unsupported endianness: %s", endianness)
+			return 0, fmt.Errorf("unsupported endianness: %s", endiannessStr)
 		}
 		// Convert half precision to single precision (simplified)
 		float32Bits := uint32(bits) << 16
 		return float64(math.Float32frombits(float32Bits)), nil
 	case 32:
 		var bits uint32
-		switch endianness {
+		switch endiannessStr {
 		case bitstringpkg.EndiannessBig, "":
 			bits = binary.BigEndian.Uint32(extractedData)
 		case bitstringpkg.EndiannessLittle:
 			bits = binary.LittleEndian.Uint32(extractedData)
 		case bitstringpkg.EndiannessNative:
-			bits = binary.LittleEndian.Uint32(extractedData)
+			if endianness.GetNativeEndianness() == "little" {
+				bits = binary.LittleEndian.Uint32(extractedData)
+			} else {
+				bits = binary.BigEndian.Uint32(extractedData)
+			}
 		default:
-			return 0, fmt.Errorf("unsupported endianness: %s", endianness)
+			return 0, fmt.Errorf("unsupported endianness: %s", endiannessStr)
 		}
 		return float64(math.Float32frombits(bits)), nil
 	case 64:
 		var bits uint64
-		switch endianness {
+		switch endiannessStr {
 		case bitstringpkg.EndiannessBig, "":
 			bits = binary.BigEndian.Uint64(extractedData)
 		case bitstringpkg.EndiannessLittle:
 			bits = binary.LittleEndian.Uint64(extractedData)
 		case bitstringpkg.EndiannessNative:
-			bits = binary.LittleEndian.Uint64(extractedData)
+			if endianness.GetNativeEndianness() == "little" {
+				bits = binary.LittleEndian.Uint64(extractedData)
+			} else {
+				bits = binary.BigEndian.Uint64(extractedData)
+			}
 		default:
-			return 0, fmt.Errorf("unsupported endianness: %s", endianness)
+			return 0, fmt.Errorf("unsupported endianness: %s", endiannessStr)
 		}
 		return math.Float64frombits(bits), nil
 	default:
@@ -519,7 +532,7 @@ func (m *Matcher) bindBinaryValue(variable interface{}, value []byte) error {
 }
 
 // extractInteger extracts an integer value from the bitstring
-func (m *Matcher) extractInteger(bs *bitstringpkg.BitString, offset, size uint, endianness string) (int64, error) {
+func (m *Matcher) extractInteger(bs *bitstringpkg.BitString, offset, size uint, endiannessStr string) (int64, error) {
 	data := bs.ToBytes()
 	byteOffset := offset / 8
 	bitOffset := offset % 8
@@ -537,7 +550,7 @@ func (m *Matcher) extractInteger(bs *bitstringpkg.BitString, offset, size uint, 
 
 	extractedData := data[byteOffset : byteOffset+bytesNeeded]
 
-	switch endianness {
+	switch endiannessStr {
 	case bitstringpkg.EndiannessBig, "":
 		return m.bytesToInt64BigEndian(extractedData)
 	case bitstringpkg.EndiannessLittle:
@@ -545,7 +558,7 @@ func (m *Matcher) extractInteger(bs *bitstringpkg.BitString, offset, size uint, 
 	case bitstringpkg.EndiannessNative:
 		return m.bytesToInt64Native(extractedData)
 	default:
-		return 0, fmt.Errorf("unsupported endianness: %s", endianness)
+		return 0, fmt.Errorf("unsupported endianness: %s", endiannessStr)
 	}
 }
 
@@ -598,18 +611,35 @@ func (m *Matcher) bytesToInt64LittleEndian(data []byte) (int64, error) {
 
 // bytesToInt64Native converts bytes to int64 in native endianness format
 func (m *Matcher) bytesToInt64Native(data []byte) (int64, error) {
-	switch len(data) {
-	case 1:
-		return int64(data[0]), nil
-	case 2:
-		return int64(binary.LittleEndian.Uint16(data)), nil
-	case 4:
-		return int64(binary.LittleEndian.Uint32(data)), nil
-	case 8:
-		return int64(binary.LittleEndian.Uint64(data)), nil
-	default:
-		// Fall back to little-endian for unusual sizes
-		return m.bytesToInt64LittleEndian(data)
+	if endianness.GetNativeEndianness() == "little" {
+		switch len(data) {
+		case 1:
+			return int64(data[0]), nil
+		case 2:
+			return int64(binary.LittleEndian.Uint16(data)), nil
+		case 4:
+			return int64(binary.LittleEndian.Uint32(data)), nil
+		case 8:
+			return int64(binary.LittleEndian.Uint64(data)), nil
+		default:
+			// Fall back to little-endian for unusual sizes
+			return m.bytesToInt64LittleEndian(data)
+		}
+	} else {
+		// Big-endian system
+		switch len(data) {
+		case 1:
+			return int64(data[0]), nil
+		case 2:
+			return int64(binary.BigEndian.Uint16(data)), nil
+		case 4:
+			return int64(binary.BigEndian.Uint32(data)), nil
+		case 8:
+			return int64(binary.BigEndian.Uint64(data)), nil
+		default:
+			// Fall back to big-endian for unusual sizes
+			return m.bytesToInt64BigEndian(data)
+		}
 	}
 }
 
