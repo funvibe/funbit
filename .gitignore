@@ -1,0 +1,269 @@
+# .gitignore for funbit project
+AGENTS.md
+
+# Binary output directories
+/bin/
+/cmd/*/bin/
+/internal/*/bin/
+
+# Go specific
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+go.work
+go.work.sum
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+
+# Dependency directories (remove the comment below to include it)
+vendor/
+
+# Go module file sum
+go.sum
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Build output directories
+build/
+dist/
+out/
+
+# Benchmark results
+*.bench
+*.prof
+*.cpu
+*.mem
+*.trace
+
+# Documentation build
+docs/build/
+docs/public/
+
+# Example binaries
+cmd/examples/*.exe
+cmd/benchmarks/*.exe
+
+# Test cache
+.cache/
+
+# Local configuration
+.env
+.env.local
+.config.local
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Compiled binaries
+funbit.exe
+
+# Debug symbols
+*.debug
+
+# Profile files
+profile.out
+cpu.out
+mem.out
+
+# Performance test artifacts
+perf.data
+perf.data.old
+
+# Code coverage artifacts
+coverage.xml
+cover.html
+
+# Lint and formatting artifacts
+golangci-lint.run
+lint.log
+
+# Docker build artifacts
+.dockerignore
+Dockerfile*
+
+# Kubernetes manifests
+*.yaml
+*.yml
+!doc/*.yaml
+!doc/*.yml
+
+# Terraform files
+*.tf
+*.tfstate
+*.tfvars
+
+# CI/CD pipeline artifacts
+.github/workflows/*.log
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Package manager lock files
+package-lock.json
+yarn.lock
+composer.lock
+Gemfile.lock
+
+# Documentation dependencies
+docs/node_modules/
+docs/package-lock.json
+
+# Generated documentation
+docs/api/
+docs/generated/
+
+# Local development tools
+.tools/
+.bin/
+
+# Virtual environments
+venv/
+.env/
+.venv/
+
+# Cache directories
+.cache/
+.tmp/
+.temp/
+
+# Backup files
+*.backup
+*.old
+
+# Archive files
+*.tar
+*.tar.gz
+*.zip
+*.rar
+
+# Compressed files
+*.gz
+*.bz2
+*.xz
+*.7z
+
+# System files
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Local configuration overrides
+config.local.yaml
+settings.local.json
+
+# Development databases
+*.dev.db
+*.test.db
+
+# Session data
+*.session
+*.session.json
+
+# Debug logs
+debug.log
+error.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory for different tools
+.nyc_output/
+coveralls/
+
+# Storybook build (if used for UI components)
+.storybook-out/
+storybook-static/
+
+# Temporary editor directories
+.vscode-test/
+
+# Local SSL certificates
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Cloud specific files
+.aws/
+.gcloud/
+.azure/
+
+# Package manager directories
+node_modules/
+bower_components/
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Rust specific
+Cargo.lock
+target/
+
+# Java specific
+*.class
+*.war
+*.ear
+*.jar
+/target/
+
+# Node.js specific
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+.node_repl_history
+
+# Markdown build artifacts
+*.pdf
+*.epub
+.mtime.yml
