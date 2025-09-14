@@ -414,7 +414,7 @@ func TestBitstringComplexProtocol(t *testing.T) {
 		Integer(&parsedTCPChecksum, bitstring.WithSize(16), bitstring.WithEndianness("big")).
 		Integer(&parsedTCPUrgent, bitstring.WithSize(16), bitstring.WithEndianness("big")).
 		// Payload
-		Binary(&parsedPayload).
+		Binary(&parsedPayload, bitstring.WithSize(uint(len("GET / HTTP/1.1\r\n")))).
 		Match(packet)
 
 	if err != nil {

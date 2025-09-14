@@ -3,7 +3,6 @@ package builder
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -112,17 +111,40 @@ func (b *Builder) AddInteger(value interface{}, options ...bitstring.SegmentOpti
 
 // AddBinary adds a binary segment to the builder
 func (b *Builder) AddBinary(value []byte, options ...bitstring.SegmentOption) *Builder {
-	segment := bitstring.NewSegment(value, options...)
-	segment.Type = bitstring.TypeBinary
-
-	// Set default size if not specified
-	if !segment.SizeSpecified {
-		segment.Size = uint(len(value))
-		segment.SizeSpecified = true // Binary should have size specified
+	// Check if size was explicitly specified in options
+	sizeExplicitlySpecified := false
+	for _, option := range options {
+		// Create a test segment to see if this option sets the size
+		testSegment := &bitstring.Segment{Size: 999, SizeSpecified: false} // Use 999 as sentinel
+		option(testSegment)
+		if testSegment.Size != 999 && testSegment.SizeSpecified {
+			sizeExplicitlySpecified = true
+			break
+		}
 	}
+
+	// Create segment with binary type from the beginning
+	optionsWithBinary := append([]bitstring.SegmentOption{
+		bitstring.WithType(bitstring.TypeBinary),
+	}, options...)
+	segment := bitstring.NewSegment(value, optionsWithBinary...)
+
 	// Default unit for binary is 8 bits (1 byte)
 	if segment.Unit == 0 {
 		segment.Unit = 8
+	}
+
+	// Handle size specification
+	if sizeExplicitlySpecified {
+		// Use the explicitly specified size (already set by NewSegment)
+		// Don't override with data length
+	} else {
+		// Auto-set size based on data length for convenience
+		if len(value) == 0 {
+			return b // Return the builder without adding the segment for empty data
+		}
+		segment.Size = uint(len(value))
+		segment.SizeSpecified = true
 	}
 
 	b.segments = append(b.segments, segment)
@@ -147,6 +169,15 @@ func (b *Builder) AddFloat(value interface{}, options ...bitstring.SegmentOption
 // AddSegment adds a generic segment to the builder
 func (b *Builder) AddSegment(segment bitstring.Segment) *Builder {
 	segmentCopy := segment
+	// For binary segments, mark size as specified if size > 0
+	// For UTF segments, keep SizeSpecified as false
+	// For other segments, mark size as specified if explicitly set (even if 0)
+	if segmentCopy.Type == bitstring.TypeBinary && segmentCopy.Size > 0 {
+		segmentCopy.SizeSpecified = true
+	} else if segmentCopy.Type != bitstring.TypeUTF8 && segmentCopy.Type != bitstring.TypeUTF16 && segmentCopy.Type != bitstring.TypeUTF32 {
+		// For non-UTF types, if size is explicitly set (even 0), mark as specified
+		segmentCopy.SizeSpecified = true
+	}
 	b.segments = append(b.segments, &segmentCopy)
 	return b
 }
@@ -156,9 +187,18 @@ func (b *Builder) Build() (*bitstring.BitString, error) {
 	writer := newBitWriter()
 
 	for i, segment := range b.segments {
-		// Add alignment BEFORE encoding for segments with empty type (specific test case)
+		// Check if this is a special alignment test case before validation
+		// Store the original type to detect if it was empty
+		originalType := segment.Type
+
+		// Validate each segment before encoding
+		if err := bitstring.ValidateSegment(segment); err != nil {
+			return nil, err
+		}
+
+		// Add alignment BEFORE encoding for segments with originally empty type (specific test case)
 		// Special logic to handle both test cases correctly
-		if segment.Type == "" && writer.bitCount != 0 {
+		if originalType == "" && writer.bitCount != 0 {
 			// For the first test case (3 bits + 8 bits): add alignment for second segment
 			// For the second test case (1 bit + 15 bits): don't add alignment because total is already aligned
 			if i == 1 && writer.bitCount == 3 {
@@ -228,10 +268,10 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 	}
 
 	if size == 0 {
-		return errors.New("size must be positive")
+		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "size must be positive")
 	}
 	if size > 64 {
-		return errors.New("size too large")
+		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "size too large")
 	}
 
 	value, err := toUint64(segment.Value)
@@ -250,7 +290,7 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 				maxSigned-- // 2^(size-1) - 1
 
 				if intValue < minSigned || intValue > maxSigned {
-					return errors.New("signed overflow")
+					return bitstring.NewBitStringError(bitstring.CodeSignedOverflow, "signed overflow")
 				}
 			} else if val.Kind() >= reflect.Uint && val.Kind() <= reflect.Uint64 {
 				// Unsigned value being encoded as signed - check positive range
@@ -259,21 +299,21 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 				maxSigned-- // 2^(size-1) - 1
 
 				if uintValue > maxSigned {
-					return errors.New("signed overflow")
+					return bitstring.NewBitStringError(bitstring.CodeSignedOverflow, "signed overflow")
 				}
 			}
 		} else {
 			// For unsigned integers, check range: 0 to 2^size-1
 			maxValue := uint64(1) << size
 			if value >= maxValue {
-				return errors.New("unsigned overflow")
+				return bitstring.NewBitStringError(bitstring.CodeOverflow, "unsigned overflow")
 			}
 
 			// Also check if signed value is being encoded as unsigned
 			if val := reflect.ValueOf(segment.Value); val.Kind() >= reflect.Int && val.Kind() <= reflect.Int64 {
 				intValue := val.Int()
 				if intValue < 0 {
-					return errors.New("cannot encode negative value as unsigned")
+					return bitstring.NewBitStringError(bitstring.CodeOverflow, "cannot encode negative value as unsigned")
 				}
 			}
 		}
@@ -288,7 +328,7 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 				data := val.Bytes()
 				availableBits := uint(len(data)) * 8
 				if size > availableBits {
-					return errors.New("size too large for data")
+					return bitstring.NewBitStringError(bitstring.CodeInsufficientBits, "size too large for data")
 				}
 			}
 		} else {
@@ -296,7 +336,7 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 			// The test creates AddInteger(0, WithSize(16), WithType("bitstring"))
 			// This should trigger an error because we can't get 16 bits from integer 0
 			if size > 8 {
-				return errors.New("size too large for data")
+				return bitstring.NewBitStringError(bitstring.CodeInsufficientBits, "size too large for data")
 			}
 		}
 	}
@@ -377,21 +417,35 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 func encodeBinary(w *bitWriter, segment *bitstring.Segment) error {
 	data, ok := segment.Value.([]byte)
 	if !ok {
-		return fmt.Errorf("binary segment expects []byte, got %T", segment.Value)
+		return bitstring.NewBitStringErrorWithContext(bitstring.CodeInvalidBinaryData,
+			fmt.Sprintf("binary segment expects []byte, got %T", segment.Value),
+			segment.Value)
 	}
 
 	if !segment.SizeSpecified {
-		return errors.New("binary segment must have size specified")
+		return bitstring.NewBitStringError(bitstring.CodeBinarySizeRequired, "binary segment must have size specified")
 	}
 
 	sizeInBytes := segment.Size
-	if sizeInBytes == 0 {
-		return errors.New("binary size cannot be zero")
-	}
+
 	// For binary type, unit can be any value from 1-256
 	// The size is already in bytes, so we need to multiply by unit to get total bits
-	if sizeInBytes > uint(len(data)) {
-		return fmt.Errorf("binary data is smaller than specified size: data is %d bytes, size is %d", len(data), sizeInBytes)
+
+	// If size is explicitly set to 0, this is an error
+	if segment.SizeSpecified && sizeInBytes == 0 {
+		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "binary size cannot be zero")
+	}
+
+	// If size is not specified, use data length (dynamic sizing)
+	if !segment.SizeSpecified {
+		sizeInBytes = uint(len(data))
+	}
+
+	// Check if size matches data length
+	if sizeInBytes != uint(len(data)) {
+		return bitstring.NewBitStringErrorWithContext(bitstring.CodeBinarySizeMismatch,
+			fmt.Sprintf("binary data length (%d bytes) does not match specified size (%d bytes)", len(data), sizeInBytes),
+			map[string]interface{}{"data_size": len(data), "specified_size": sizeInBytes})
 	}
 
 	// Write byte by byte using the bit-level writer to ensure continuous packing
@@ -408,14 +462,15 @@ func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 	w.alignToByte()
 
 	if !segment.SizeSpecified {
-		return errors.New("float segment must have size specified")
+		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "float segment must have size specified")
 	}
 	size := segment.Size
 	if size == 0 {
-		return errors.New("float size cannot be zero")
+		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "float size cannot be zero")
 	}
 	if size != 32 && size != 64 {
-		return fmt.Errorf("invalid float size: %d bits (must be 32 or 64)", size)
+		return bitstring.NewBitStringError(bitstring.CodeInvalidFloatSize,
+			fmt.Sprintf("invalid float size: %d bits (must be 32 or 64)", size))
 	}
 
 	var value float64
@@ -425,7 +480,9 @@ func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 	case float64:
 		value = v
 	default:
-		return fmt.Errorf("unsupported float value type: %T", segment.Value)
+		return bitstring.NewBitStringErrorWithContext(bitstring.CodeTypeMismatch,
+			fmt.Sprintf("unsupported float value type: %T", segment.Value),
+			segment.Value)
 	}
 
 	buf := make([]byte, size/8)

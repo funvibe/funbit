@@ -1,5 +1,7 @@
 package bitstring
 
+import "fmt"
+
 // This file contains additional segment-related utilities and constants
 
 // Segment types constants
@@ -120,7 +122,12 @@ func NewSegment(value interface{}, options ...SegmentOption) *Segment {
 	// Set default size based on type if not specified
 	if !segment.SizeSpecified {
 		segment.Size = getDefaultSizeForType(segment.Type)
-		segment.SizeSpecified = false
+		// For UTF types, we should not mark size as specified because UTF cannot have size
+		if segment.Type == TypeUTF8 || segment.Type == TypeUTF16 || segment.Type == TypeUTF32 {
+			segment.SizeSpecified = false
+		} else {
+			segment.SizeSpecified = true
+		}
 	}
 
 	return segment
@@ -133,12 +140,8 @@ func getDefaultSizeForType(segmentType string) uint {
 		return DefaultSizeInteger
 	case TypeFloat:
 		return DefaultSizeFloat
-	case TypeUTF8:
-		return 8 // UTF-8 uses 8-bit encoding
-	case TypeUTF16:
-		return 16 // UTF-16 uses 16-bit encoding
-	case TypeUTF32:
-		return 32 // UTF-32 uses 32-bit encoding
+	case TypeUTF8, TypeUTF16, TypeUTF32:
+		return 0 // UTF types should not have default size - they are variable length
 	default:
 		return 0 // no default size for binary/bitstring types
 	}
@@ -161,10 +164,7 @@ func getDefaultUnitForType(segmentType string) uint {
 // ValidateSegment checks if a segment has valid configuration
 func ValidateSegment(segment *Segment) error {
 	if segment == nil {
-		return &BitStringError{
-			Code:    "INVALID_SEGMENT",
-			Message: "segment cannot be nil",
-		}
+		return NewBitStringError(CodeInvalidSegment, "segment cannot be nil")
 	}
 
 	// Validate type
@@ -172,13 +172,18 @@ func ValidateSegment(segment *Segment) error {
 		segment.Type = TypeInteger // default to integer
 	}
 
+	// Validate size - size 0 is invalid for most types, but allowed for binary dynamic sizing
+	if segment.SizeSpecified && segment.Size == 0 {
+		// Allow size 0 for binary segments (dynamic sizing)
+		if segment.Type != TypeBinary {
+			return NewBitStringError(CodeInvalidSize, "size must be positive")
+		}
+	}
+
 	// Validate unit - check if explicitly set to invalid value
 	if segment.UnitSpecified {
 		if segment.Unit < 1 || segment.Unit > 256 {
-			return &BitStringError{
-				Code:    "INVALID_UNIT",
-				Message: "unit must be between 1 and 256",
-			}
+			return NewBitStringError(CodeInvalidUnit, "unit must be between 1 and 256")
 		}
 	}
 
@@ -190,36 +195,68 @@ func ValidateSegment(segment *Segment) error {
 	if segment.Endianness != EndiannessBig &&
 		segment.Endianness != EndiannessLittle &&
 		segment.Endianness != EndiannessNative {
-		return &BitStringError{
-			Code:    "INVALID_ENDIANNESS",
-			Message: "endianness must be 'big', 'little', or 'native'",
-		}
+		return NewBitStringError(CodeInvalidEndianness, "endianness must be 'big', 'little', or 'native'")
 	}
 
 	// Type-specific validations
 	switch segment.Type {
 	case TypeFloat:
 		if segment.SizeSpecified && (segment.Size != 16 && segment.Size != 32 && segment.Size != 64) {
-			return &BitStringError{
-				Code:    "INVALID_FLOAT_SIZE",
-				Message: "float size must be 16, 32, or 64 bits",
-			}
+			return NewBitStringError(CodeInvalidFloatSize, "float size must be 16, 32, or 64 bits")
 		}
 	case TypeUTF8, TypeUTF16, TypeUTF32:
-		if segment.SizeSpecified {
-			return &BitStringError{
-				Code:    "UTF_SIZE_SPECIFIED",
-				Message: "UTF types cannot have size specified",
+		// First validate Unicode code point
+		if segment.Value != nil {
+			if codePoint, ok := segment.Value.(int); ok {
+				if codePoint < 0 || codePoint > 0x10FFFF {
+					return NewBitStringError(CodeInvalidUnicodeCodepoint, "invalid Unicode code point")
+				}
 			}
+		}
+
+		// Then validate size
+		if segment.SizeSpecified {
+			return NewBitStringError(CodeUTFSizeSpecified, "UTF types cannot have size specified")
 		}
 		// For UTF types, unit can only be set to the default value (1)
 		// but only if it was explicitly specified
 		if segment.UnitSpecified && segment.Unit != getDefaultUnitForType(segment.Type) {
-			return &BitStringError{
-				Code:    "UTF_UNIT_MODIFIED",
-				Message: "UTF types cannot have unit modified from default value",
+			return NewBitStringError(CodeUTFUnitModified, "UTF types cannot have unit modified from default value")
+		}
+	case TypeBinary:
+		// Binary segments must have size specified, unless using dynamic sizing
+		if !segment.SizeSpecified {
+			// Allow dynamic sizing for matcher (size will be determined during matching)
+			return nil
+		}
+
+		// Size 0 is allowed for dynamic sizing (will be determined during matching)
+		if segment.Size == 0 {
+			return nil
+		}
+
+		if segment.Value != nil {
+			// Validate that the value is actually []byte or *[]uint8 (which is the same as []byte)
+			if _, ok := segment.Value.([]byte); !ok {
+				// Try to handle *[]uint8 which is essentially the same as []byte
+				if ptr, ok := segment.Value.(*[]uint8); ok {
+					// Convert *[]uint8 to []byte
+					*ptr = []byte(*ptr)
+				} else {
+					return NewBitStringErrorWithContext(CodeInvalidBinaryData,
+						fmt.Sprintf("binary segment expects []byte, got %T", segment.Value),
+						segment.Value)
+				}
 			}
 		}
+	}
+
+	// Validate that the type is supported
+	switch segment.Type {
+	case TypeInteger, TypeFloat, TypeBinary, TypeBitstring, TypeUTF, TypeUTF8, TypeUTF16, TypeUTF32, TypeRestBinary, TypeRestBitstring:
+		// Valid types
+	default:
+		return NewBitStringError(CodeInvalidType, fmt.Sprintf("unsupported segment type: %s", segment.Type))
 	}
 
 	return nil
@@ -234,7 +271,68 @@ type BitStringError struct {
 
 func (e *BitStringError) Error() string {
 	if e.Context != nil {
-		return e.Message + " (context: " + string(e.Context.(string)) + ")"
+		switch v := e.Context.(type) {
+		case string:
+			return e.Message + " (context: " + v + ")"
+		case int:
+			return e.Message + " (context: " + fmt.Sprintf("%d", v) + ")"
+		case uint:
+			return e.Message + " (context: " + fmt.Sprintf("%d", v) + ")"
+		case map[string]interface{}:
+			return e.Message + " (context: " + fmt.Sprintf("%v", v) + ")"
+		default:
+			return e.Message + " (context: " + fmt.Sprintf("%v", v) + ")"
+		}
 	}
 	return e.Message
+}
+
+// Error codes for bitstring operations
+const (
+	// Overflow errors
+	CodeOverflow       = "OVERFLOW"
+	CodeSignedOverflow = "SIGNED_OVERFLOW"
+
+	// Insufficient data errors
+	CodeInsufficientBits = "INSUFFICIENT_BITS"
+
+	// Invalid segment configuration errors
+	CodeInvalidSize       = "INVALID_SIZE"
+	CodeInvalidType       = "INVALID_TYPE"
+	CodeInvalidEndianness = "INVALID_ENDIANNESS"
+
+	// Binary-specific errors
+	CodeBinarySizeRequired = "BINARY_SIZE_REQUIRED"
+	CodeBinarySizeMismatch = "BINARY_SIZE_MISMATCH"
+	CodeInvalidBinaryData  = "INVALID_BINARY_DATA"
+
+	// UTF-specific errors
+	CodeUTFSizeSpecified        = "UTF_SIZE_SPECIFIED"
+	CodeInvalidUnicodeCodepoint = "INVALID_UNICODE_CODEPOINT"
+
+	// Type mismatch errors
+	CodeTypeMismatch = "TYPE_MISMATCH"
+
+	// General validation errors
+	CodeInvalidSegment   = "INVALID_SEGMENT"
+	CodeInvalidUnit      = "INVALID_UNIT"
+	CodeInvalidFloatSize = "INVALID_FLOAT_SIZE"
+	CodeUTFUnitModified  = "UTF_UNIT_MODIFIED"
+)
+
+// NewBitStringError creates a new BitStringError with the given code and message
+func NewBitStringError(code, message string) *BitStringError {
+	return &BitStringError{
+		Code:    code,
+		Message: message,
+	}
+}
+
+// NewBitStringErrorWithContext creates a new BitStringError with the given code, message, and context
+func NewBitStringErrorWithContext(code, message string, context interface{}) *BitStringError {
+	return &BitStringError{
+		Code:    code,
+		Message: message,
+		Context: context,
+	}
 }

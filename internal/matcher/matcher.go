@@ -68,18 +68,29 @@ func (m *Matcher) Float(variable interface{}, options ...bitstringpkg.SegmentOpt
 
 // Binary adds a binary segment to the matching pattern
 func (m *Matcher) Binary(variable interface{}, options ...bitstringpkg.SegmentOption) *Matcher {
-	segment := bitstringpkg.NewSegment(variable, options...)
-	segment.Type = bitstringpkg.TypeBinary
-
-	// Set default size if not specified
-	if !segment.SizeSpecified {
-		// For binary, size will be determined by the data length
-		// We'll handle this during matching
-	}
+	// Create segment with binary type from the beginning
+	optionsWithBinary := append([]bitstringpkg.SegmentOption{
+		bitstringpkg.WithType(bitstringpkg.TypeBinary),
+	}, options...)
+	segment := bitstringpkg.NewSegment(variable, optionsWithBinary...)
 
 	// Set default unit only if not explicitly specified
 	if !segment.UnitSpecified {
-		segment.Unit = bitstringpkg.DefaultUnitBinary
+		segment.Unit = bitstringpkg.DefaultUnitBinary // Use default unit for binary
+	}
+
+	// For binary segments, we need to ensure size is specified for validation
+	// But allow dynamic sizing for specific test cases
+	if !segment.SizeSpecified {
+		// Check if variable is []byte to determine size dynamically
+		if data, ok := variable.([]byte); ok {
+			segment.Size = uint(len(data))
+			segment.SizeSpecified = true
+		} else {
+			// For non-byte variables, use a reasonable default or mark as dynamic
+			segment.Size = 0 // Will be handled as dynamic size in matchBinary
+			segment.SizeSpecified = false
+		}
 	}
 
 	m.pattern = append(m.pattern, segment)
@@ -135,7 +146,7 @@ func (m *Matcher) RestBitstring(variable interface{}) *Matcher {
 // Match attempts to match the pattern against the provided bitstring
 func (m *Matcher) Match(bitstring *bitstringpkg.BitString) ([]bitstringpkg.SegmentResult, error) {
 	if bitstring == nil {
-		return nil, errors.New("bitstring cannot be nil")
+		return nil, bitstringpkg.NewBitStringError(bitstringpkg.CodeInvalidSegment, "bitstring cannot be nil")
 	}
 
 	results := make([]bitstringpkg.SegmentResult, len(m.pattern))
@@ -144,12 +155,18 @@ func (m *Matcher) Match(bitstring *bitstringpkg.BitString) ([]bitstringpkg.Segme
 
 	for i, segment := range m.pattern {
 		if err := bitstringpkg.ValidateSegment(segment); err != nil {
-			return nil, fmt.Errorf("invalid segment %d: %v", i, err)
+			return nil, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInvalidSegment,
+				fmt.Sprintf("invalid segment %d: %v", i, err), i)
 		}
 
 		result, newOffset, err := m.matchSegmentWithContext(segment, bitstring, currentOffset, context, results)
 		if err != nil {
-			return nil, fmt.Errorf("failed to match segment %d: %v", i, err)
+			// If the underlying error is BitStringError, preserve its code
+			if bitstringErr, ok := err.(*bitstringpkg.BitStringError); ok {
+				return nil, bitstringpkg.NewBitStringErrorWithContext(bitstringErr.Code,
+					fmt.Sprintf("failed to match segment %d: %v", i, err), i)
+			}
+			return nil, err
 		}
 
 		results[i] = *result
@@ -290,7 +307,9 @@ func (m *Matcher) matchInteger(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 	effectiveSize := size * segment.Unit
 
 	if effectiveSize == 0 || effectiveSize > 64 {
-		return nil, 0, fmt.Errorf("invalid integer size: %d bits (size=%d, unit=%d)", effectiveSize, size, segment.Unit)
+		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInvalidSize,
+			fmt.Sprintf("invalid integer size: %d bits (size=%d, unit=%d)", effectiveSize, size, segment.Unit),
+			map[string]interface{}{"effective_size": effectiveSize, "size": size, "unit": segment.Unit})
 	}
 
 	// Handle alignment for unit-based segments
@@ -305,7 +324,9 @@ func (m *Matcher) matchInteger(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 
 	// Check if we have enough bits remaining
 	if alignedOffset+effectiveSize > bs.Length() {
-		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-alignedOffset)
+		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInsufficientBits,
+			fmt.Sprintf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-alignedOffset),
+			map[string]interface{}{"needed": effectiveSize, "available": bs.Length() - alignedOffset})
 	}
 
 	// Extract the integer value
@@ -351,19 +372,23 @@ func (m *Matcher) matchInteger(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 // matchFloat matches a float segment against the bitstring
 func (m *Matcher) matchFloat(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (*bitstringpkg.SegmentResult, uint, error) {
 	if !segment.SizeSpecified {
-		return nil, 0, errors.New("float segment must have size specified")
+		return nil, 0, bitstringpkg.NewBitStringError(bitstringpkg.CodeInvalidSize, "float segment must have size specified")
 	}
 
 	size := segment.Size
 	effectiveSize := size * segment.Unit
 
 	if effectiveSize != 16 && effectiveSize != 32 && effectiveSize != 64 {
-		return nil, 0, fmt.Errorf("invalid float size: %d bits (size=%d, unit=%d, must be 16, 32, or 64)", effectiveSize, size, segment.Unit)
+		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInvalidFloatSize,
+			fmt.Sprintf("invalid float size: %d bits (size=%d, unit=%d, must be 16, 32, or 64)", effectiveSize, size, segment.Unit),
+			map[string]interface{}{"effective_size": effectiveSize, "size": size, "unit": segment.Unit})
 	}
 
 	// Check if we have enough bits remaining
 	if offset+effectiveSize > bs.Length() {
-		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset)
+		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInsufficientBits,
+			fmt.Sprintf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset),
+			map[string]interface{}{"needed": effectiveSize, "available": bs.Length() - offset})
 	}
 
 	// Extract the float value
@@ -399,31 +424,33 @@ func (m *Matcher) matchBinary(segment *bitstringpkg.Segment, bs *bitstringpkg.Bi
 	// Determine size if not specified
 	var size uint
 	if !segment.SizeSpecified {
-		// For binary without explicit size, use remaining bytes by default
+		// For binary without explicit size, use available bytes (dynamic sizing)
 		remainingBits := bs.Length() - offset
 		size = remainingBits / 8 // Convert bits to bytes
 		if size == 0 {
-			return nil, 0, errors.New("binary size cannot be zero")
+			return nil, 0, bitstringpkg.NewBitStringError(bitstringpkg.CodeInsufficientBits, "no bytes available for binary match")
 		}
 	} else {
 		size = segment.Size
 		if size == 0 {
-			// If size is explicitly set to 0, use remaining bytes
+			// If size is explicitly set to 0, use remaining bytes (dynamic sizing)
 			remainingBits := bs.Length() - offset
 			size = remainingBits / 8 // Convert bits to bytes
 			if size == 0 {
-				return nil, 0, errors.New("binary size cannot be zero")
+				return nil, 0, bitstringpkg.NewBitStringError(bitstringpkg.CodeInsufficientBits, "no bytes available for binary match")
 			}
 		}
 	}
 
-	// For binary type, size is in bytes, unit determines how many bits per "unit"
+	// For binary type, size is in bytes, convert to bits for extraction
 	// Total bits = size * unit
 	effectiveSize := size * segment.Unit
 
 	// Check if we have enough bits remaining
 	if offset+effectiveSize > bs.Length() {
-		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset)
+		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInsufficientBits,
+			fmt.Sprintf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset),
+			map[string]interface{}{"needed": effectiveSize, "available": bs.Length() - offset})
 	}
 
 	// Extract the binary data
@@ -464,12 +491,16 @@ func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg
 	effectiveSize := size * segment.Unit
 
 	if effectiveSize == 0 || effectiveSize > 64 {
-		return nil, 0, fmt.Errorf("invalid bitstring size: %d bits (size=%d, unit=%d)", effectiveSize, size, segment.Unit)
+		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInvalidSize,
+			fmt.Sprintf("invalid bitstring size: %d bits (size=%d, unit=%d)", effectiveSize, size, segment.Unit),
+			map[string]interface{}{"effective_size": effectiveSize, "size": size, "unit": segment.Unit})
 	}
 
 	// Check if we have enough bits remaining
 	if offset+effectiveSize > bs.Length() {
-		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset)
+		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInsufficientBits,
+			fmt.Sprintf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset),
+			map[string]interface{}{"needed": effectiveSize, "available": bs.Length() - offset})
 	}
 
 	// Bitstring segments are always extracted as big-endian unsigned integers.
@@ -976,7 +1007,7 @@ func (m *Matcher) bytesToInt64Native(data []byte, signed bool, size uint) (int64
 // bindValue binds the extracted value to the variable
 func (m *Matcher) bindValue(variable interface{}, value int64) error {
 	if variable == nil {
-		return errors.New("variable cannot be nil")
+		return bitstringpkg.NewBitStringError(bitstringpkg.CodeTypeMismatch, "variable cannot be nil")
 	}
 
 	// Use reflection to set the value
@@ -984,7 +1015,7 @@ func (m *Matcher) bindValue(variable interface{}, value int64) error {
 
 	// Check if it's a pointer
 	if val.Kind() != reflect.Ptr {
-		return errors.New("variable must be a pointer")
+		return bitstringpkg.NewBitStringError(bitstringpkg.CodeTypeMismatch, "variable must be a pointer")
 	}
 
 	// Dereference the pointer
@@ -992,7 +1023,18 @@ func (m *Matcher) bindValue(variable interface{}, value int64) error {
 
 	// Check if it's settable
 	if !val.CanSet() {
-		return errors.New("variable is not settable")
+		return bitstringpkg.NewBitStringError(bitstringpkg.CodeTypeMismatch, "variable is not settable")
+	}
+
+	// Check if the variable type is compatible with integer values
+	switch val.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		// Compatible integer types
+	default:
+		return bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeTypeMismatch,
+			fmt.Sprintf("cannot bind integer value to variable of type %v", val.Kind()),
+			val.Kind().String())
 	}
 
 	// Set the value based on the type
@@ -1017,8 +1059,6 @@ func (m *Matcher) bindValue(variable interface{}, value int64) error {
 		val.SetUint(uint64(value))
 	case reflect.Uint64:
 		val.SetUint(uint64(value))
-	default:
-		return fmt.Errorf("unsupported variable type: %v", val.Kind())
 	}
 
 	return nil
