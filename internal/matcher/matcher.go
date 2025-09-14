@@ -111,6 +111,22 @@ func (m *Matcher) RegisterVariable(name string, variable interface{}) *Matcher {
 	return m
 }
 
+// RestBinary adds a rest binary segment to the matching pattern (must be byte-aligned)
+func (m *Matcher) RestBinary(variable interface{}) *Matcher {
+	segment := bitstringpkg.NewSegment(variable)
+	segment.Type = bitstringpkg.TypeRestBinary
+	m.pattern = append(m.pattern, segment)
+	return m
+}
+
+// RestBitstring adds a rest bitstring segment to the matching pattern (any bit length)
+func (m *Matcher) RestBitstring(variable interface{}) *Matcher {
+	segment := bitstringpkg.NewSegment(variable)
+	segment.Type = bitstringpkg.TypeRestBitstring
+	m.pattern = append(m.pattern, segment)
+	return m
+}
+
 // Match attempts to match the pattern against the provided bitstring
 func (m *Matcher) Match(bitstring *bitstringpkg.BitString) ([]bitstringpkg.SegmentResult, error) {
 	if bitstring == nil {
@@ -179,6 +195,10 @@ func (m *Matcher) matchSegmentWithContext(segment *bitstringpkg.Segment, bs *bit
 		return m.matchBitstring(segment, bs, offset)
 	case bitstringpkg.TypeUTF, bitstringpkg.TypeUTF8, bitstringpkg.TypeUTF16, bitstringpkg.TypeUTF32:
 		return m.matchUTF(segment, bs, offset)
+	case bitstringpkg.TypeRestBinary:
+		return m.matchRestBinary(segment, bs, offset)
+	case bitstringpkg.TypeRestBitstring:
+		return m.matchRestBitstring(segment, bs, offset)
 	default:
 		return nil, 0, fmt.Errorf("unsupported segment type: %s", segment.Type)
 	}
@@ -1237,6 +1257,103 @@ func (m *Matcher) bindUTFValue(variable interface{}, value string) error {
 		val.SetString(value)
 	default:
 		return fmt.Errorf("unsupported UTF variable type: %v", val.Kind())
+	}
+
+	return nil
+}
+
+// createRestResult creates a common result structure for rest patterns
+func (m *Matcher) createRestResult(value interface{}, offset uint, remainingBits uint) (*bitstringpkg.SegmentResult, uint) {
+	// Create remaining bitstring (should be empty for rest patterns)
+	remaining := bitstringpkg.NewBitString()
+
+	result := &bitstringpkg.SegmentResult{
+		Value:     value,
+		Matched:   true,
+		Remaining: remaining,
+	}
+
+	return result, offset + remainingBits
+}
+
+// matchRestBinary matches the rest of the bitstring as binary (must be byte-aligned)
+func (m *Matcher) matchRestBinary(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (*bitstringpkg.SegmentResult, uint, error) {
+	remainingBits := bs.Length() - offset
+
+	// Check if remaining bits are byte-aligned
+	if remainingBits%8 != 0 {
+		return nil, 0, fmt.Errorf("rest binary requires byte-aligned data, but %d bits remain (not divisible by 8)", remainingBits)
+	}
+
+	// Extract remaining data as binary
+	value, err := m.extractBinary(bs, offset, remainingBits)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to extract rest binary data: %v", err)
+	}
+
+	// Bind the value to the variable
+	if err := m.bindBinaryValue(segment.Value, value); err != nil {
+		return nil, 0, fmt.Errorf("failed to bind rest binary value: %v", err)
+	}
+
+	result, newOffset := m.createRestResult(value, offset, remainingBits)
+	return result, newOffset, nil
+}
+
+// matchRestBitstring matches the rest of the bitstring as bitstring (any bit length)
+func (m *Matcher) matchRestBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (*bitstringpkg.SegmentResult, uint, error) {
+	remainingBits := bs.Length() - offset
+
+	// Extract remaining data as bitstring
+	value := m.extractRemainingBits(bs, offset)
+
+	// Verify that the extracted bitstring has the expected length
+	if value.Length() != remainingBits {
+		return nil, 0, fmt.Errorf("extracted bitstring length %d doesn't match expected remaining bits %d", value.Length(), remainingBits)
+	}
+
+	// Bind the value to the variable
+	if err := m.bindBitstringValue(segment.Value, value); err != nil {
+		return nil, 0, fmt.Errorf("failed to bind rest bitstring value: %v", err)
+	}
+
+	result, newOffset := m.createRestResult(value, offset, remainingBits)
+	return result, newOffset, nil
+}
+
+// bindBitstringValue binds the extracted bitstring value to the variable
+func (m *Matcher) bindBitstringValue(variable interface{}, value *bitstringpkg.BitString) error {
+	if variable == nil {
+		return errors.New("variable cannot be nil")
+	}
+
+	// Use reflection to set the value
+	val := reflect.ValueOf(variable)
+
+	// Check if it's a pointer
+	if val.Kind() != reflect.Ptr {
+		return errors.New("variable must be a pointer")
+	}
+
+	// Dereference the pointer
+	val = val.Elem()
+
+	// Check if it's settable
+	if !val.CanSet() {
+		return errors.New("variable is not settable")
+	}
+
+	// Set the value based on the type
+	switch val.Kind() {
+	case reflect.Ptr:
+		// For *BitString type
+		if val.Type() == reflect.TypeOf(&bitstringpkg.BitString{}) {
+			val.Set(reflect.ValueOf(value))
+		} else {
+			return fmt.Errorf("unsupported bitstring variable type: %v", val.Type())
+		}
+	default:
+		return fmt.Errorf("unsupported bitstring variable type: %v", val.Kind())
 	}
 
 	return nil

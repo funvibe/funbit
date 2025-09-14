@@ -4,14 +4,16 @@ package bitstring
 
 // Segment types constants
 const (
-	TypeInteger   = "integer"
-	TypeFloat     = "float"
-	TypeBinary    = "binary"
-	TypeBitstring = "bitstring"
-	TypeUTF       = "utf"   // Generic UTF type
-	TypeUTF8      = "utf8"  // UTF-8 specific
-	TypeUTF16     = "utf16" // UTF-16 specific
-	TypeUTF32     = "utf32" // UTF-32 specific
+	TypeInteger       = "integer"
+	TypeFloat         = "float"
+	TypeBinary        = "binary"
+	TypeBitstring     = "bitstring"
+	TypeUTF           = "utf"   // Generic UTF type
+	TypeUTF8          = "utf8"  // UTF-8 specific
+	TypeUTF16         = "utf16" // UTF-16 specific
+	TypeUTF32         = "utf32" // UTF-32 specific
+	TypeRestBinary    = "rest_binary"
+	TypeRestBitstring = "rest_bitstring"
 )
 
 // Endianness constants
