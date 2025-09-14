@@ -179,7 +179,6 @@ func (b *Builder) Build() (*bitstring.BitString, error) {
 	}
 
 	data, totalBits := writer.final()
-	fmt.Printf("Build: created bitstring with %d bits, data: %v\n", totalBits, data)
 	return bitstring.NewBitStringFromBits(data, totalBits), nil
 }
 
@@ -381,8 +380,6 @@ func encodeBinary(w *bitWriter, segment *bitstring.Segment) error {
 		return fmt.Errorf("binary segment expects []byte, got %T", segment.Value)
 	}
 
-	fmt.Printf("encodeBinary: data=%v, segment.Size=%v, segment.Unit=%d\n", data, segment.Size, segment.Unit)
-
 	if !segment.SizeSpecified {
 		return errors.New("binary segment must have size specified")
 	}
@@ -391,10 +388,8 @@ func encodeBinary(w *bitWriter, segment *bitstring.Segment) error {
 	if sizeInBytes == 0 {
 		return errors.New("binary size cannot be zero")
 	}
-	unit := segment.Unit
-	if unit != 8 {
-		return fmt.Errorf("binary type only supports unit=8, got %d", unit)
-	}
+	// For binary type, unit can be any value from 1-256
+	// The size is already in bytes, so we need to multiply by unit to get total bits
 	if sizeInBytes > uint(len(data)) {
 		return fmt.Errorf("binary data is smaller than specified size: data is %d bytes, size is %d", len(data), sizeInBytes)
 	}

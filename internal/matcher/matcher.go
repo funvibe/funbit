@@ -37,8 +37,10 @@ func (m *Matcher) Integer(variable interface{}, options ...bitstringpkg.SegmentO
 		segment.SizeSpecified = false
 	}
 
-	// Set default unit
-	segment.Unit = bitstringpkg.DefaultUnitInteger
+	// Set default unit only if not explicitly specified
+	if !segment.UnitSpecified {
+		segment.Unit = bitstringpkg.DefaultUnitInteger
+	}
 
 	m.pattern = append(m.pattern, segment)
 	return m
@@ -55,8 +57,10 @@ func (m *Matcher) Float(variable interface{}, options ...bitstringpkg.SegmentOpt
 		segment.SizeSpecified = false
 	}
 
-	// Set default unit
-	segment.Unit = bitstringpkg.DefaultUnitFloat
+	// Set default unit only if not explicitly set
+	if segment.Unit == 0 {
+		segment.Unit = bitstringpkg.DefaultUnitFloat
+	}
 
 	m.pattern = append(m.pattern, segment)
 	return m
@@ -73,9 +77,8 @@ func (m *Matcher) Binary(variable interface{}, options ...bitstringpkg.SegmentOp
 		// We'll handle this during matching
 	}
 
-	// Set default unit for binary segments if not explicitly set
-	// Check if unit is still the default initial value (1) from NewSegment
-	if segment.Unit == 1 {
+	// Set default unit only if not explicitly specified
+	if !segment.UnitSpecified {
 		segment.Unit = bitstringpkg.DefaultUnitBinary
 	}
 
@@ -98,8 +101,10 @@ func (m *Matcher) UTF(variable interface{}, options ...bitstringpkg.SegmentOptio
 		segment.SizeSpecified = false
 	}
 
-	// Set default unit
-	segment.Unit = bitstringpkg.DefaultUnitUTF
+	// Set default unit only if not explicitly set
+	if segment.Unit == 0 {
+		segment.Unit = bitstringpkg.DefaultUnitUTF
+	}
 
 	m.pattern = append(m.pattern, segment)
 	return m
@@ -175,11 +180,8 @@ func (m *Matcher) matchSegmentWithContext(segment *bitstringpkg.Segment, bs *bit
 		segmentCopy.Size = evaluatedSize
 		segmentCopy.SizeSpecified = true
 
-		// Apply unit conversion for dynamic sizes
-		if segmentCopy.Type == bitstringpkg.TypeBinary {
-			// Convert from units to bits
-			segmentCopy.Size = segmentCopy.Size * segmentCopy.Unit
-		}
+		// For binary type, dynamic size is already in bytes, no conversion needed
+		// The unit multiplication will be handled in matchBinary
 
 		segment = &segmentCopy
 	}
@@ -284,17 +286,30 @@ func (m *Matcher) matchInteger(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 		size = segment.Size
 	}
 
-	if size == 0 || size > 64 {
-		return nil, 0, fmt.Errorf("invalid integer size: %d bits", size)
+	// Calculate effective size using unit
+	effectiveSize := size * segment.Unit
+
+	if effectiveSize == 0 || effectiveSize > 64 {
+		return nil, 0, fmt.Errorf("invalid integer size: %d bits (size=%d, unit=%d)", effectiveSize, size, segment.Unit)
+	}
+
+	// Handle alignment for unit-based segments
+	alignedOffset := offset
+	if segment.Unit > 1 && segment.Unit%8 == 0 {
+		// For byte-aligned units (8, 16, 24, etc.), align to byte boundary
+		byteOffset := (offset + 7) / 8 * 8 // Round up to next byte boundary
+		if byteOffset <= bs.Length() {
+			alignedOffset = byteOffset
+		}
 	}
 
 	// Check if we have enough bits remaining
-	if offset+size > bs.Length() {
-		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", size, bs.Length()-offset)
+	if alignedOffset+effectiveSize > bs.Length() {
+		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-alignedOffset)
 	}
 
 	// Extract the integer value
-	value, err := m.extractInteger(bs, offset, size, segment.Endianness, segment.Signed)
+	value, err := m.extractInteger(bs, alignedOffset, effectiveSize, segment.Endianness, segment.Signed)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to extract integer: %v", err)
 	}
@@ -306,18 +321,18 @@ func (m *Matcher) matchInteger(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 
 	// Create remaining bitstring
 	var remaining *bitstringpkg.BitString
-	if offset+size < bs.Length() {
+	if offset+effectiveSize < bs.Length() {
 		// Extract remaining bits
 		remainingData := bs.ToBytes()
-		remainingOffset := (offset + size) / 8
-		remainingBitOffset := (offset + size) % 8
+		remainingOffset := (offset + effectiveSize) / 8
+		remainingBitOffset := (offset + effectiveSize) % 8
 
 		if remainingBitOffset == 0 {
 			// Aligned to byte boundary
 			remaining = bitstringpkg.NewBitStringFromBytes(remainingData[remainingOffset:])
 		} else {
 			// Not aligned - need bit-level extraction
-			remaining = m.extractRemainingBits(bs, offset+size)
+			remaining = m.extractRemainingBits(bs, offset+effectiveSize)
 		}
 	} else {
 		// No remaining bits
@@ -330,7 +345,7 @@ func (m *Matcher) matchInteger(segment *bitstringpkg.Segment, bs *bitstringpkg.B
 		Remaining: remaining,
 	}
 
-	return result, offset + size, nil
+	return result, alignedOffset + effectiveSize, nil
 }
 
 // matchFloat matches a float segment against the bitstring
@@ -340,17 +355,19 @@ func (m *Matcher) matchFloat(segment *bitstringpkg.Segment, bs *bitstringpkg.Bit
 	}
 
 	size := segment.Size
-	if size != 16 && size != 32 && size != 64 {
-		return nil, 0, fmt.Errorf("invalid float size: %d bits (must be 16, 32, or 64)", size)
+	effectiveSize := size * segment.Unit
+
+	if effectiveSize != 16 && effectiveSize != 32 && effectiveSize != 64 {
+		return nil, 0, fmt.Errorf("invalid float size: %d bits (size=%d, unit=%d, must be 16, 32, or 64)", effectiveSize, size, segment.Unit)
 	}
 
 	// Check if we have enough bits remaining
-	if offset+size > bs.Length() {
-		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", size, bs.Length()-offset)
+	if offset+effectiveSize > bs.Length() {
+		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset)
 	}
 
 	// Extract the float value
-	value, err := m.extractFloat(bs, offset, size, segment.Endianness)
+	value, err := m.extractFloat(bs, offset, effectiveSize, segment.Endianness)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to extract float: %v", err)
 	}
@@ -362,8 +379,8 @@ func (m *Matcher) matchFloat(segment *bitstringpkg.Segment, bs *bitstringpkg.Bit
 
 	// Create remaining bitstring
 	var remaining *bitstringpkg.BitString
-	if offset+size < bs.Length() {
-		remaining = m.extractRemainingBits(bs, offset+size)
+	if offset+effectiveSize < bs.Length() {
+		remaining = m.extractRemainingBits(bs, offset+effectiveSize)
 	} else {
 		remaining = bitstringpkg.NewBitString()
 	}
@@ -374,7 +391,7 @@ func (m *Matcher) matchFloat(segment *bitstringpkg.Segment, bs *bitstringpkg.Bit
 		Remaining: remaining,
 	}
 
-	return result, offset + size, nil
+	return result, offset + effectiveSize, nil
 }
 
 // matchBinary matches a binary segment against the bitstring
@@ -382,34 +399,35 @@ func (m *Matcher) matchBinary(segment *bitstringpkg.Segment, bs *bitstringpkg.Bi
 	// Determine size if not specified
 	var size uint
 	if !segment.SizeSpecified {
-		// For binary without explicit size, use remaining bits by default
-		size = bs.Length() - offset
+		// For binary without explicit size, use remaining bytes by default
+		remainingBits := bs.Length() - offset
+		size = remainingBits / 8 // Convert bits to bytes
 		if size == 0 {
 			return nil, 0, errors.New("binary size cannot be zero")
 		}
 	} else {
 		size = segment.Size
-		// For binary type, if size is specified in bytes (unit=8), convert to bits
-		// But NOT for dynamic sizes - they are already converted in matchSegmentWithContext
-		if !segment.IsDynamic && segment.Unit == 8 {
-			size = size * 8
-		}
 		if size == 0 {
-			// If size is explicitly set to 0, use remaining bits
-			size = bs.Length() - offset
+			// If size is explicitly set to 0, use remaining bytes
+			remainingBits := bs.Length() - offset
+			size = remainingBits / 8 // Convert bits to bytes
 			if size == 0 {
 				return nil, 0, errors.New("binary size cannot be zero")
 			}
 		}
 	}
 
+	// For binary type, size is in bytes, unit determines how many bits per "unit"
+	// Total bits = size * unit
+	effectiveSize := size * segment.Unit
+
 	// Check if we have enough bits remaining
-	if offset+size > bs.Length() {
-		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", size, bs.Length()-offset)
+	if offset+effectiveSize > bs.Length() {
+		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset)
 	}
 
 	// Extract the binary data
-	value, err := m.extractBinary(bs, offset, size)
+	value, err := m.extractBinary(bs, offset, effectiveSize)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to extract binary: %v", err)
 	}
@@ -421,8 +439,8 @@ func (m *Matcher) matchBinary(segment *bitstringpkg.Segment, bs *bitstringpkg.Bi
 
 	// Create remaining bitstring
 	var remaining *bitstringpkg.BitString
-	if offset+size < bs.Length() {
-		remaining = m.extractRemainingBits(bs, offset+size)
+	if offset+effectiveSize < bs.Length() {
+		remaining = m.extractRemainingBits(bs, offset+effectiveSize)
 	} else {
 		remaining = bitstringpkg.NewBitString()
 	}
@@ -433,7 +451,7 @@ func (m *Matcher) matchBinary(segment *bitstringpkg.Segment, bs *bitstringpkg.Bi
 		Remaining: remaining,
 	}
 
-	return result, offset + size, nil
+	return result, offset + effectiveSize, nil
 }
 
 // matchBitstring matches a bitstring segment against the bitstring
@@ -443,17 +461,19 @@ func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg
 	}
 
 	size := segment.Size
-	if size == 0 || size > 64 {
-		return nil, 0, fmt.Errorf("invalid bitstring size: %d bits", size)
+	effectiveSize := size * segment.Unit
+
+	if effectiveSize == 0 || effectiveSize > 64 {
+		return nil, 0, fmt.Errorf("invalid bitstring size: %d bits (size=%d, unit=%d)", effectiveSize, size, segment.Unit)
 	}
 
 	// Check if we have enough bits remaining
-	if offset+size > bs.Length() {
-		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", size, bs.Length()-offset)
+	if offset+effectiveSize > bs.Length() {
+		return nil, 0, fmt.Errorf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset)
 	}
 
 	// Bitstring segments are always extracted as big-endian unsigned integers.
-	value, err := extractIntegerBits(bs.ToBytes(), offset, size, false) // bitstring is always unsigned
+	value, err := extractIntegerBits(bs.ToBytes(), offset, effectiveSize, false) // bitstring is always unsigned
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to extract bitstring: %v", err)
 	}
@@ -465,8 +485,8 @@ func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg
 
 	// Create remaining bitstring
 	var remaining *bitstringpkg.BitString
-	if offset+size < bs.Length() {
-		remaining = m.extractRemainingBits(bs, offset+size)
+	if offset+effectiveSize < bs.Length() {
+		remaining = m.extractRemainingBits(bs, offset+effectiveSize)
 	} else {
 		remaining = bitstringpkg.NewBitString()
 	}
@@ -477,7 +497,7 @@ func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg
 		Remaining: remaining,
 	}
 
-	return result, offset + size, nil
+	return result, offset + effectiveSize, nil
 }
 
 // matchUTF matches a UTF segment against the bitstring
@@ -497,6 +517,11 @@ func (m *Matcher) matchUTF(segment *bitstringpkg.Segment, bs *bitstringpkg.BitSt
 		utfType = "utf8"
 	default:
 		return nil, 0, fmt.Errorf("unsupported UTF type: %s", segment.Type)
+	}
+
+	// For UTF types, unit must always be 1 (this is validated in ValidateSegment)
+	if segment.Unit != 1 {
+		return nil, 0, fmt.Errorf("UTF types must have unit=1, but got unit=%d", segment.Unit)
 	}
 
 	// For UTF, we need to extract the encoded data and decode it

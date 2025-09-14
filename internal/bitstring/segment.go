@@ -80,6 +80,7 @@ func WithEndianness(endianness string) SegmentOption {
 func WithUnit(unit uint) SegmentOption {
 	return func(s *Segment) {
 		s.Unit = unit
+		s.UnitSpecified = true
 	}
 }
 
@@ -105,11 +106,11 @@ func WithDynamicSizeExpression(expr string) SegmentOption {
 func NewSegment(value interface{}, options ...SegmentOption) *Segment {
 	segment := &Segment{
 		Value:      value,
-		Type:       TypeInteger,        // default type
-		Signed:     Unsigned,           // default signedness
-		Endianness: EndiannessBig,      // default endianness
-		Unit:       DefaultUnitInteger, // default unit
-		IsDynamic:  false,              // default to static size
+		Type:       TypeInteger,   // default type
+		Signed:     Unsigned,      // default signedness
+		Endianness: EndiannessBig, // default endianness
+		Unit:       0,             // start with 0 to detect if unit was set
+		IsDynamic:  false,         // default to static size
 	}
 
 	for _, option := range options {
@@ -120,12 +121,6 @@ func NewSegment(value interface{}, options ...SegmentOption) *Segment {
 	if !segment.SizeSpecified {
 		segment.Size = getDefaultSizeForType(segment.Type)
 		segment.SizeSpecified = false
-	}
-
-	// Set default unit based on type only if not already set
-	if segment.Unit == DefaultUnitInteger {
-		// Only set default if unit is still the initial value
-		segment.Unit = getDefaultUnitForType(segment.Type)
 	}
 
 	return segment
@@ -177,15 +172,13 @@ func ValidateSegment(segment *Segment) error {
 		segment.Type = TypeInteger // default to integer
 	}
 
-	// Validate unit
-	if segment.Unit == 0 {
-		segment.Unit = getDefaultUnitForType(segment.Type)
-	}
-
-	if segment.Unit < 1 || segment.Unit > 256 {
-		return &BitStringError{
-			Code:    "INVALID_UNIT",
-			Message: "unit must be between 1 and 256",
+	// Validate unit - check if explicitly set to invalid value
+	if segment.UnitSpecified {
+		if segment.Unit < 1 || segment.Unit > 256 {
+			return &BitStringError{
+				Code:    "INVALID_UNIT",
+				Message: "unit must be between 1 and 256",
+			}
 		}
 	}
 
@@ -219,10 +212,12 @@ func ValidateSegment(segment *Segment) error {
 				Message: "UTF types cannot have size specified",
 			}
 		}
-		if segment.Unit != getDefaultUnitForType(segment.Type) {
+		// For UTF types, unit can only be set to the default value (1)
+		// but only if it was explicitly specified
+		if segment.UnitSpecified && segment.Unit != getDefaultUnitForType(segment.Type) {
 			return &BitStringError{
 				Code:    "UTF_UNIT_MODIFIED",
-				Message: "UTF types cannot have unit modified",
+				Message: "UTF types cannot have unit modified from default value",
 			}
 		}
 	}
