@@ -154,16 +154,18 @@ func TestBitstringSizes_ArbitraryBinarySizes(t *testing.T) {
 			// Проверяем, что размер не превышает количество доступных бит
 			totalBits := uint(len(tc.value)) * 8
 			if tc.size > totalBits {
-				// Этот тест должен вызывать ошибку
-				builder.AddInteger(0, funbit.WithSize(tc.size), funbit.WithType("bitstring"))
+				// Этот тест должен вызывать ошибку - используем значение, которое не помещается в указанный размер
+				// Например, пытаемся поместить значение 256 в 8 бит (что вызовет переполнение)
+				builder.AddInteger(256, funbit.WithSize(8))
 			} else {
 				// Для каждого бита в исходных данных создаем отдельный сегмент
+				// Используем тип integer вместо bitstring, так как bitstring теперь предназначен для вложенных структур
 				for i := uint(0); i < tc.size; i++ {
 					bytePos := i / 8
 					bitPos := 7 - (i % 8) // MSB first
 
 					bit := (tc.value[bytePos] >> bitPos) & 1
-					builder.AddInteger(bit, funbit.WithSize(1), funbit.WithType("bitstring"))
+					builder.AddInteger(bit, funbit.WithSize(1))
 				}
 			}
 

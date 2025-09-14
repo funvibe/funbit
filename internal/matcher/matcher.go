@@ -121,6 +121,31 @@ func (m *Matcher) UTF(variable interface{}, options ...bitstringpkg.SegmentOptio
 	return m
 }
 
+// Bitstring adds a bitstring segment to the matching pattern
+func (m *Matcher) Bitstring(variable interface{}, options ...bitstringpkg.SegmentOption) *Matcher {
+	// Create segment with bitstring type from the beginning
+	optionsWithBitstring := append([]bitstringpkg.SegmentOption{
+		bitstringpkg.WithType(bitstringpkg.TypeBitstring),
+	}, options...)
+	segment := bitstringpkg.NewSegment(variable, optionsWithBitstring...)
+
+	// Set default unit only if not explicitly specified
+	if !segment.UnitSpecified {
+		segment.Unit = bitstringpkg.DefaultUnitBitstring // Use default unit for bitstring
+	}
+
+	// For bitstring segments, size should be specified for validation
+	// But allow dynamic sizing for specific cases
+	if !segment.SizeSpecified {
+		// For bitstring without explicit size, use a reasonable default
+		segment.Size = 0 // Will be handled as dynamic size in matchBitstring
+		segment.SizeSpecified = false
+	}
+
+	m.pattern = append(m.pattern, segment)
+	return m
+}
+
 // RegisterVariable registers a variable with a specific name for dynamic size usage
 func (m *Matcher) RegisterVariable(name string, variable interface{}) *Matcher {
 	m.variables[name] = variable
@@ -483,38 +508,63 @@ func (m *Matcher) matchBinary(segment *bitstringpkg.Segment, bs *bitstringpkg.Bi
 
 // matchBitstring matches a bitstring segment against the bitstring
 func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (*bitstringpkg.SegmentResult, uint, error) {
-	if !segment.SizeSpecified {
-		return nil, 0, errors.New("bitstring segment must have size specified")
+	effectiveSize, err := m.calculateBitstringEffectiveSize(segment, bs, offset)
+	if err != nil {
+		return nil, 0, err
 	}
 
-	size := segment.Size
-	effectiveSize := size * segment.Unit
+	value, err := m.extractNestedBitstring(bs, offset, effectiveSize)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to extract nested bitstring: %v", err)
+	}
 
-	if effectiveSize == 0 || effectiveSize > 64 {
-		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInvalidSize,
+	if err := m.bindBitstringValue(segment.Value, value); err != nil {
+		return nil, 0, fmt.Errorf("failed to bind nested bitstring value: %v", err)
+	}
+
+	result := m.createBitstringMatchResult(value, bs, offset, effectiveSize)
+	return result, offset + effectiveSize, nil
+}
+
+// calculateBitstringEffectiveSize calculates the effective size for bitstring matching
+func (m *Matcher) calculateBitstringEffectiveSize(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (uint, error) {
+	size, err := m.determineBitstringMatchSize(segment, bs, offset)
+	if err != nil {
+		return 0, err
+	}
+
+	effectiveSize := size * segment.Unit
+	if effectiveSize == 0 {
+		return 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInvalidSize,
 			fmt.Sprintf("invalid bitstring size: %d bits (size=%d, unit=%d)", effectiveSize, size, segment.Unit),
 			map[string]interface{}{"effective_size": effectiveSize, "size": size, "unit": segment.Unit})
 	}
 
-	// Check if we have enough bits remaining
 	if offset+effectiveSize > bs.Length() {
-		return nil, 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInsufficientBits,
+		return 0, bitstringpkg.NewBitStringErrorWithContext(bitstringpkg.CodeInsufficientBits,
 			fmt.Sprintf("insufficient bits: need %d, have %d", effectiveSize, bs.Length()-offset),
 			map[string]interface{}{"needed": effectiveSize, "available": bs.Length() - offset})
 	}
 
-	// Bitstring segments are always extracted as big-endian unsigned integers.
-	value, err := extractIntegerBits(bs.ToBytes(), offset, effectiveSize, false) // bitstring is always unsigned
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to extract bitstring: %v", err)
+	return effectiveSize, nil
+}
+
+// determineBitstringMatchSize determines the size for bitstring matching
+func (m *Matcher) determineBitstringMatchSize(segment *bitstringpkg.Segment, bs *bitstringpkg.BitString, offset uint) (uint, error) {
+	if !segment.SizeSpecified || segment.Size == 0 {
+		// Use remaining bits (dynamic sizing)
+		remainingBits := bs.Length() - offset
+		if remainingBits == 0 {
+			return 0, bitstringpkg.NewBitStringError(bitstringpkg.CodeInsufficientBits, "no bits available for bitstring match")
+		}
+		return remainingBits, nil
 	}
 
-	// Bind the value to the variable
-	if err := m.bindValue(segment.Value, value); err != nil {
-		return nil, 0, fmt.Errorf("failed to bind bitstring value: %v", err)
-	}
+	return segment.Size, nil
+}
 
-	// Create remaining bitstring
+// createBitstringMatchResult creates a segment result for bitstring matching
+func (m *Matcher) createBitstringMatchResult(value *bitstringpkg.BitString, bs *bitstringpkg.BitString, offset, effectiveSize uint) *bitstringpkg.SegmentResult {
 	var remaining *bitstringpkg.BitString
 	if offset+effectiveSize < bs.Length() {
 		remaining = m.extractRemainingBits(bs, offset+effectiveSize)
@@ -522,13 +572,11 @@ func (m *Matcher) matchBitstring(segment *bitstringpkg.Segment, bs *bitstringpkg
 		remaining = bitstringpkg.NewBitString()
 	}
 
-	result := &bitstringpkg.SegmentResult{
+	return &bitstringpkg.SegmentResult{
 		Value:     value,
 		Matched:   true,
 		Remaining: remaining,
 	}
-
-	return result, offset + effectiveSize, nil
 }
 
 // matchUTF matches a UTF segment against the bitstring
@@ -718,6 +766,96 @@ func (m *Matcher) extractBinaryBits(data []byte, start, length uint) ([]byte, er
 	}
 
 	return resultBytes, nil
+}
+
+// extractNestedBitstring extracts a nested bitstring from the source bitstring
+func (m *Matcher) extractNestedBitstring(bs *bitstringpkg.BitString, offset, size uint) (*bitstringpkg.BitString, error) {
+	if err := validateExtractionBounds(bs, offset, size); err != nil {
+		return nil, err
+	}
+
+	nestedBs := m.extractRemainingBits(bs, offset)
+
+	if nestedBs.Length() == size {
+		return nestedBs, nil
+	}
+
+	return m.truncateBitstring(nestedBs, size)
+}
+
+// validateExtractionBounds validates the bounds for bitstring extraction
+func validateExtractionBounds(bs *bitstringpkg.BitString, offset, size uint) error {
+	if offset+size > bs.Length() {
+		return fmt.Errorf("cannot extract %d bits from position %d", size, offset)
+	}
+	return nil
+}
+
+// truncateBitstring truncates a bitstring to the specified size
+func (m *Matcher) truncateBitstring(bs *bitstringpkg.BitString, size uint) (*bitstringpkg.BitString, error) {
+	if bs.Length() <= size {
+		return bs, nil
+	}
+
+	if size == 0 {
+		return bitstringpkg.NewBitString(), nil
+	}
+
+	nestedData := bs.ToBytes()
+	resultData := make([]byte, (size+7)/8)
+
+	err := m.copyBitsWithTruncation(nestedData, resultData, size)
+	if err != nil {
+		return nil, err
+	}
+
+	return bitstringpkg.NewBitStringFromBits(resultData, size), nil
+}
+
+// copyBitsWithTruncation copies bits from source to destination with proper truncation
+func (m *Matcher) copyBitsWithTruncation(source, dest []byte, totalBits uint) error {
+	dataIndex := uint(0)
+	resultIndex := uint(0)
+	bitsRemaining := totalBits
+
+	for bitsRemaining > 0 && dataIndex < uint(len(source)) {
+		bitsToExtract := bitsRemaining
+		if bitsToExtract > 8 {
+			bitsToExtract = 8
+		}
+
+		extractedByte, err := m.extractBitsFromByte(source[dataIndex], bitsToExtract)
+		if err != nil {
+			return err
+		}
+
+		dest[resultIndex] = extractedByte
+		dataIndex++
+		resultIndex++
+		bitsRemaining -= bitsToExtract
+	}
+
+	return nil
+}
+
+// extractBitsFromByte extracts the specified number of bits from a byte
+func (m *Matcher) extractBitsFromByte(byteVal byte, bitsToExtract uint) (byte, error) {
+	if bitsToExtract > 8 {
+		return 0, fmt.Errorf("cannot extract more than 8 bits from a byte")
+	}
+
+	var extractedByte byte
+	for i := uint(0); i < bitsToExtract; i++ {
+		bit := (byteVal >> (7 - i)) & 1
+		extractedByte = (extractedByte << 1) | bit
+	}
+
+	// Shift the extracted byte to the left if we didn't use all 8 bits
+	if bitsToExtract < 8 {
+		extractedByte <<= (8 - bitsToExtract)
+	}
+
+	return extractedByte, nil
 }
 
 // bindFloatValue binds the extracted float value to the variable

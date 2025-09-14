@@ -157,12 +157,13 @@ func TestBitstringTypes_CombinedBinary(t *testing.T) {
 // TestBitstringTypes_Bitstring тестирование bitstring типа (не выровнено по байтам)
 func TestBitstringTypes_Bitstring(t *testing.T) {
 	// <<1:1, 0:1, 1:1, 1:1, 0:4>>
+	// Используем integer тип для отдельных битов, так как bitstring теперь предназначен для вложенных структур
 	bs, err := builder.NewBuilder().
-		AddInteger(1, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		AddInteger(0, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		AddInteger(1, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		AddInteger(1, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		AddInteger(0, bitstring.WithSize(4), bitstring.WithType("bitstring")).
+		AddInteger(1, bitstring.WithSize(1)).
+		AddInteger(0, bitstring.WithSize(1)).
+		AddInteger(1, bitstring.WithSize(1)).
+		AddInteger(1, bitstring.WithSize(1)).
+		AddInteger(0, bitstring.WithSize(4)).
 		Build()
 
 	if err != nil {
@@ -182,11 +183,11 @@ func TestBitstringTypes_Bitstring(t *testing.T) {
 	// Матчинг каждого бита отдельно
 	var bit1, bit2, bit3, bit4, padding int
 	_, err = matcher.NewMatcher().
-		Integer(&bit1, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		Integer(&bit2, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		Integer(&bit3, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		Integer(&bit4, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		Integer(&padding, bitstring.WithSize(4), bitstring.WithType("bitstring")).
+		Integer(&bit1, bitstring.WithSize(1)).
+		Integer(&bit2, bitstring.WithSize(1)).
+		Integer(&bit3, bitstring.WithSize(1)).
+		Integer(&bit4, bitstring.WithSize(1)).
+		Integer(&padding, bitstring.WithSize(4)).
 		Match(bs)
 
 	if err != nil {
@@ -201,12 +202,13 @@ func TestBitstringTypes_Bitstring(t *testing.T) {
 // TestBitstringTypes_MultipleTypeSegments тестирование смешанных типов в одной битовой строке
 func TestBitstringTypes_MultipleTypeSegments(t *testing.T) {
 	// Комбинированная битовая строка с разными типами
+	// Используем integer вместо bitstring для отдельных битов, так как bitstring теперь предназначен для вложенных структур
 	bs, err := builder.NewBuilder().
-		AddInteger(42, bitstring.WithSize(8), bitstring.WithType("integer")).  // integer
-		AddFloat(3.14, bitstring.WithSize(32), bitstring.WithType("float")).   // float 32
-		AddBinary([]byte("test"), bitstring.WithType("binary")).               // binary
-		AddInteger(1, bitstring.WithSize(1), bitstring.WithType("bitstring")). // bitstring
-		AddInteger(0, bitstring.WithSize(7), bitstring.WithType("bitstring")). // дополнение до байта
+		AddInteger(42, bitstring.WithSize(8), bitstring.WithType("integer")). // integer
+		AddFloat(3.14, bitstring.WithSize(32), bitstring.WithType("float")).  // float 32
+		AddBinary([]byte("test"), bitstring.WithType("binary")).              // binary
+		AddInteger(1, bitstring.WithSize(1)).                                 // integer (было bitstring)
+		AddInteger(0, bitstring.WithSize(7)).                                 // дополнение до байта (было bitstring)
 		Build()
 
 	if err != nil {
@@ -222,8 +224,8 @@ func TestBitstringTypes_MultipleTypeSegments(t *testing.T) {
 		Integer(&intValue, bitstring.WithSize(8), bitstring.WithType("integer")).
 		Float(&floatValue, bitstring.WithSize(32), bitstring.WithType("float")).
 		Binary(&binaryData, bitstring.WithSize(4), bitstring.WithType("binary")).
-		Integer(&bit1, bitstring.WithSize(1), bitstring.WithType("bitstring")).
-		Integer(&padding, bitstring.WithSize(7), bitstring.WithType("bitstring")).
+		Integer(&bit1, bitstring.WithSize(1)).    // integer (было bitstring)
+		Integer(&padding, bitstring.WithSize(7)). // дополнение до байта (было bitstring)
 		Match(bs)
 
 	if err != nil {
@@ -341,11 +343,12 @@ func TestBitstringTypes_BinaryAlignment(t *testing.T) {
 // TestBitstringTypes_BitstringAlignment тестирование невыровненных bitstring данных
 func TestBitstringTypes_BitstringAlignment(t *testing.T) {
 	// Тест: bitstring данные не требуют выравнивания по байтам
+	// Используем integer вместо bitstring для отдельных битов, так как bitstring теперь предназначен для вложенных структур
 	bs, err := builder.NewBuilder().
-		AddInteger(1, bitstring.WithSize(3), bitstring.WithType("bitstring")). // 3 бита
-		AddInteger(2, bitstring.WithSize(5), bitstring.WithType("bitstring")). // 5 бит
-		AddInteger(3, bitstring.WithSize(7), bitstring.WithType("bitstring")). // 7 бит
-		AddInteger(1, bitstring.WithSize(1), bitstring.WithType("bitstring")). // 1 бит (значение 1, а не 4)
+		AddInteger(1, bitstring.WithSize(3)). // 3 бита
+		AddInteger(2, bitstring.WithSize(5)). // 5 бит
+		AddInteger(3, bitstring.WithSize(7)). // 7 бит
+		AddInteger(1, bitstring.WithSize(1)). // 1 бит (значение 1, а не 4)
 		Build()
 
 	if err != nil {
@@ -359,10 +362,10 @@ func TestBitstringTypes_BitstringAlignment(t *testing.T) {
 
 	var a, b, c, d int
 	_, err = matcher.NewMatcher().
-		Integer(&a, bitstring.WithSize(3), bitstring.WithType("bitstring")).
-		Integer(&b, bitstring.WithSize(5), bitstring.WithType("bitstring")).
-		Integer(&c, bitstring.WithSize(7), bitstring.WithType("bitstring")).
-		Integer(&d, bitstring.WithSize(1), bitstring.WithType("bitstring")).
+		Integer(&a, bitstring.WithSize(3)).
+		Integer(&b, bitstring.WithSize(5)).
+		Integer(&c, bitstring.WithSize(7)).
+		Integer(&d, bitstring.WithSize(1)).
 		Match(bs)
 
 	if err != nil {

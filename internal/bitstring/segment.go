@@ -223,8 +223,8 @@ func ValidateSegment(segment *Segment) error {
 		if segment.UnitSpecified && segment.Unit != getDefaultUnitForType(segment.Type) {
 			return NewBitStringError(CodeUTFUnitModified, "UTF types cannot have unit modified from default value")
 		}
-	case TypeBinary:
-		// Binary segments must have size specified, unless using dynamic sizing
+	case TypeBinary, TypeBitstring:
+		// Binary and bitstring segments must have size specified, unless using dynamic sizing
 		if !segment.SizeSpecified {
 			// Allow dynamic sizing for matcher (size will be determined during matching)
 			return nil
@@ -236,16 +236,31 @@ func ValidateSegment(segment *Segment) error {
 		}
 
 		if segment.Value != nil {
-			// Validate that the value is actually []byte or *[]uint8 (which is the same as []byte)
-			if _, ok := segment.Value.([]byte); !ok {
-				// Try to handle *[]uint8 which is essentially the same as []byte
-				if ptr, ok := segment.Value.(*[]uint8); ok {
-					// Convert *[]uint8 to []byte
-					*ptr = []byte(*ptr)
-				} else {
-					return NewBitStringErrorWithContext(CodeInvalidBinaryData,
-						fmt.Sprintf("binary segment expects []byte, got %T", segment.Value),
-						segment.Value)
+			// For binary type, validate that the value is []byte or *[]uint8
+			if segment.Type == TypeBinary {
+				if _, ok := segment.Value.([]byte); !ok {
+					// Try to handle *[]uint8 which is essentially the same as []byte
+					if ptr, ok := segment.Value.(*[]uint8); ok {
+						// Convert *[]uint8 to []byte
+						*ptr = []byte(*ptr)
+					} else {
+						return NewBitStringErrorWithContext(CodeInvalidBinaryData,
+							fmt.Sprintf("binary segment expects []byte, got %T", segment.Value),
+							segment.Value)
+					}
+				}
+			}
+			// For bitstring type, validate that the value is *BitString
+			if segment.Type == TypeBitstring {
+				if _, ok := segment.Value.(*BitString); !ok {
+					// Also check for **BitString (double pointer)
+					if _, ok := segment.Value.(**BitString); ok {
+						// Double pointer is valid in some contexts
+					} else {
+						return NewBitStringErrorWithContext(CodeInvalidBitstringData,
+							fmt.Sprintf("bitstring segment expects *BitString, got %T", segment.Value),
+							segment.Value)
+					}
 				}
 			}
 		}
@@ -305,6 +320,9 @@ const (
 	CodeBinarySizeRequired = "BINARY_SIZE_REQUIRED"
 	CodeBinarySizeMismatch = "BINARY_SIZE_MISMATCH"
 	CodeInvalidBinaryData  = "INVALID_BINARY_DATA"
+
+	// Bitstring-specific errors
+	CodeInvalidBitstringData = "INVALID_BITSTRING_DATA"
 
 	// UTF-specific errors
 	CodeUTFSizeSpecified        = "UTF_SIZE_SPECIFIED"

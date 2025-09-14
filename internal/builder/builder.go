@@ -153,12 +153,56 @@ func (b *Builder) AddBinary(value []byte, options ...bitstring.SegmentOption) *B
 
 // AddFloat adds a float segment to the builder
 func (b *Builder) AddFloat(value interface{}, options ...bitstring.SegmentOption) *Builder {
-	segment := bitstring.NewSegment(value, options...)
-	segment.Type = bitstring.TypeFloat
+	// Check if type is explicitly specified in options
+	typeExplicitlySpecified := false
+	tempSegment := &bitstring.Segment{}
+	for _, option := range options {
+		originalType := tempSegment.Type
+		option(tempSegment)
+		if tempSegment.Type != originalType && tempSegment.Type != "" {
+			typeExplicitlySpecified = true
+			break
+		}
+	}
 
-	// Set default size if not specified
-	if !segment.SizeSpecified {
-		segment.Size = bitstring.DefaultSizeFloat
+	// Only add type option if not explicitly specified
+	var allOptions []bitstring.SegmentOption
+	if !typeExplicitlySpecified {
+		allOptions = append([]bitstring.SegmentOption{bitstring.WithType(bitstring.TypeFloat)}, options...)
+	} else {
+		allOptions = options
+	}
+
+	segment := bitstring.NewSegment(value, allOptions...)
+
+	// Check if size was explicitly specified in options
+	sizeExplicitlySpecified := false
+	tempSegment2 := &bitstring.Segment{}
+	for _, option := range options {
+		originalSizeSpecified := tempSegment2.SizeSpecified
+		option(tempSegment2)
+		if tempSegment2.SizeSpecified && !originalSizeSpecified {
+			sizeExplicitlySpecified = true
+			break
+		}
+	}
+
+	// If size was not explicitly specified, we need to handle the default size
+	if !sizeExplicitlySpecified {
+		// For float values, we need to determine the appropriate default size
+		// based on the actual value type
+		switch value.(type) {
+		case float32:
+			// For float32, use 32 bits as default size
+			segment.Size = 32
+		case float64:
+			// For float64, use 64 bits as default size
+			segment.Size = 64
+		default:
+			// For other types (interface{}, etc.), use the default float size
+			segment.Size = bitstring.DefaultSizeFloat
+		}
+		// Mark SizeSpecified as false when using default size
 		segment.SizeSpecified = false
 	}
 
@@ -180,6 +224,46 @@ func (b *Builder) AddSegment(segment bitstring.Segment) *Builder {
 	}
 	b.segments = append(b.segments, &segmentCopy)
 	return b
+}
+
+// AddBitstring adds a nested bitstring segment to the builder
+func (b *Builder) AddBitstring(value *bitstring.BitString, options ...bitstring.SegmentOption) *Builder {
+	if value == nil {
+		return b
+	}
+
+	segment := bitstring.NewSegment(value, options...)
+	segment.Type = bitstring.TypeBitstring
+
+	b.setDefaultBitstringProperties(segment, value, options)
+	b.segments = append(b.segments, segment)
+	return b
+}
+
+// setDefaultBitstringProperties sets default properties for bitstring segments
+func (b *Builder) setDefaultBitstringProperties(segment *bitstring.Segment, value *bitstring.BitString, options []bitstring.SegmentOption) {
+	// Default unit for bitstring is 1 bit
+	if segment.Unit == 0 {
+		segment.Unit = 1
+	}
+
+	// Auto-set size based on bitstring length if not explicitly set
+	if !b.isSizeExplicitlySet(options) {
+		segment.Size = value.Length()
+		segment.SizeSpecified = true
+	}
+}
+
+// isSizeExplicitlySet checks if size was explicitly set in options
+func (b *Builder) isSizeExplicitlySet(options []bitstring.SegmentOption) bool {
+	for _, option := range options {
+		testSegment := &bitstring.Segment{Size: 999, SizeSpecified: false} // Use 999 as sentinel
+		option(testSegment)
+		if testSegment.Size != 999 && testSegment.SizeSpecified {
+			return true
+		}
+	}
+	return false
 }
 
 // Build constructs the final bitstring from all segments
@@ -229,8 +313,10 @@ func encodeSegment(w *bitWriter, segment *bitstring.Segment) error {
 	}
 
 	switch segment.Type {
-	case bitstring.TypeInteger, bitstring.TypeBitstring, "":
+	case bitstring.TypeInteger, "":
 		return encodeInteger(w, segment)
+	case bitstring.TypeBitstring:
+		return encodeBitstring(w, segment)
 	case bitstring.TypeFloat:
 		return encodeFloat(w, segment)
 	case bitstring.TypeBinary:
@@ -456,11 +542,90 @@ func encodeBinary(w *bitWriter, segment *bitstring.Segment) error {
 	return nil
 }
 
+// encodeBitstring encodes a nested bitstring value into the writer.
+func encodeBitstring(w *bitWriter, segment *bitstring.Segment) error {
+	bs, err := validateBitstringValue(segment)
+	if err != nil {
+		return err
+	}
+
+	size, err := determineBitstringSize(segment, bs)
+	if err != nil {
+		return err
+	}
+
+	return writeBitstringBits(w, bs, size)
+}
+
+// validateBitstringValue validates the bitstring value in the segment
+func validateBitstringValue(segment *bitstring.Segment) (*bitstring.BitString, error) {
+	bs, ok := segment.Value.(*bitstring.BitString)
+	if !ok {
+		return nil, bitstring.NewBitStringErrorWithContext(bitstring.CodeTypeMismatch,
+			fmt.Sprintf("bitstring segment expects *BitString, got %T", segment.Value),
+			segment.Value)
+	}
+
+	if bs == nil {
+		return nil, bitstring.NewBitStringError(bitstring.CodeInvalidSegment, "bitstring value cannot be nil")
+	}
+
+	return bs, nil
+}
+
+// determineBitstringSize determines the effective size for bitstring encoding
+func determineBitstringSize(segment *bitstring.Segment, bs *bitstring.BitString) (uint, error) {
+	var size uint
+	if !segment.SizeSpecified {
+		size = bs.Length()
+	} else {
+		size = segment.Size
+	}
+
+	if size == 0 {
+		return 0, bitstring.NewBitStringError(bitstring.CodeInvalidSize, "bitstring size cannot be zero")
+	}
+
+	if size > bs.Length() {
+		return 0, bitstring.NewBitStringErrorWithContext(bitstring.CodeInsufficientBits,
+			fmt.Sprintf("bitstring data length (%d bits) is less than specified size (%d bits)", bs.Length(), size),
+			map[string]interface{}{"data_size": bs.Length(), "specified_size": size})
+	}
+
+	return size, nil
+}
+
+// writeBitstringBits writes bits from source bitstring to the writer
+func writeBitstringBits(w *bitWriter, bs *bitstring.BitString, size uint) error {
+	sourceBytes := bs.ToBytes()
+
+	for bitsWritten := uint(0); bitsWritten < size; bitsWritten++ {
+		byteIndex := bitsWritten / 8
+		bitIndex := bitsWritten % 8
+
+		if byteIndex >= uint(len(sourceBytes)) {
+			break // Safety check
+		}
+
+		bit := extractBitAtPosition(sourceBytes[byteIndex], bitIndex)
+		w.writeBits(uint64(bit), 1)
+	}
+
+	return nil
+}
+
+// extractBitAtPosition extracts a single bit at the specified position from a byte
+func extractBitAtPosition(byteVal byte, bitIndex uint) byte {
+	// Bits are stored MSB first, so we need to extract from the left
+	return (byteVal >> (7 - bitIndex)) & 1
+}
+
 // encodeFloat encodes a float value into the writer.
 // It ensures byte alignment before writing.
 func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 	w.alignToByte()
 
+	// Float segments must have size specified
 	if !segment.SizeSpecified {
 		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "float segment must have size specified")
 	}
