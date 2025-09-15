@@ -1,8 +1,5 @@
 # Funbit - Erlang/OTP Bit Syntax Library for Go
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/funvibe/funbit.svg)](https://pkg.go.dev/github.com/funvibe/funbit)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 Funbit is a comprehensive Go library that provides Erlang/OTP bit syntax compatibility for working with bitstrings and binary data. It offers a fluent interface for both constructing and pattern matching bitstrings with full support for dynamic sizing, various data types, and endianness handling.
 
 ## Features
@@ -311,7 +308,7 @@ Common error codes:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.
 
 ## Acknowledgments
 
