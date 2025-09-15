@@ -27,18 +27,18 @@ package main
 
 import (
     "fmt"
-    "github.com/funvibe/funbit/internal/builder"
-    "github.com/funvibe/funbit/internal/bitstring"
+    "github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
     // Create a simple bitstring
-    bs, err := builder.NewBuilder().
-        AddInteger(1, builder.WithSize(4)).          // 4-bit integer
-        AddInteger(17, builder.WithSize(12)).        // 12-bit integer
-        AddFloat(3.14, builder.WithSize(32)).        // 32-bit float
-        AddBinary([]byte("hello")).                  // Binary data
-        Build()
+    builder := funbit.NewBuilder()
+    funbit.AddInteger(builder, 1, funbit.WithSize(4))          // 4-bit integer
+    funbit.AddInteger(builder, 17, funbit.WithSize(12))        // 12-bit integer
+    funbit.AddFloat(builder, 3.14, funbit.WithSize(32))        // 32-bit float
+    funbit.AddBinary(builder, []byte("hello"))                  // Binary data
+    
+    bs, err := funbit.Build(builder)
     
     if err != nil {
         panic(err)
@@ -55,23 +55,23 @@ package main
 
 import (
     "fmt"
-    "github.com/funvibe/funbit/internal/matcher"
-    "github.com/funvibe/funbit/internal/bitstring"
+    "github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
     // Create a bitstring to match against
-    bs := bitstring.NewBitStringFromBytes([]byte{0x12, 0x34, 0x56, 0x78})
+    bs := funbit.NewBitStringFromBytes([]byte{0x12, 0x34, 0x56, 0x78})
     
     var a, b uint8
     var c uint16
     
     // Match pattern against bitstring
-    results, err := matcher.NewMatcher().
-        Integer(&a, matcher.WithSize(8)).           // Match 8-bit integer
-        Integer(&b, matcher.WithSize(8)).           // Match 8-bit integer
-        Integer(&c, matcher.WithSize(16)).          // Match 16-bit integer
-        Match(bs)
+    matcher := funbit.NewMatcher()
+    funbit.Integer(matcher, &a, funbit.WithSize(8))           // Match 8-bit integer
+    funbit.Integer(matcher, &b, funbit.WithSize(8))           // Match 8-bit integer
+    funbit.Integer(matcher, &c, funbit.WithSize(16))          // Match 16-bit integer
+    
+    results, err := funbit.Match(matcher, bs)
     
     if err != nil {
         panic(err)
@@ -90,9 +90,7 @@ package main
 
 import (
     "fmt"
-    "github.com/funvibe/funbit/internal/builder"
-    "github.com/funvibe/funbit/internal/matcher"
-    "github.com/funvibe/funbit/internal/bitstring"
+    "github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
@@ -100,20 +98,22 @@ func main() {
     size := uint(5)
     data := []byte{1, 2, 3, 4, 5}
     
-    bs, err := builder.NewBuilder().
-        AddInteger(size, builder.WithSize(8)).               // Size field
-        AddBinary(data, builder.WithDynamicSize(&size)).     // Data with dynamic size
-        Build()
+    builder := funbit.NewBuilder()
+    funbit.AddInteger(builder, size, funbit.WithSize(8))               // Size field
+    funbit.AddBinary(builder, data, funbit.WithDynamicSize(&size))     // Data with dynamic size
+    
+    bs, err := funbit.Build(builder)
     
     // Matching with dynamic sizing
     var matchedSize uint
     var matchedData []byte
     
-    results, err := matcher.NewMatcher().
-        Integer(&matchedSize, matcher.WithSize(8)).
-        RegisterVariable("size", &matchedSize).
-        Binary(&matchedData, matcher.WithDynamicSizeExpression("size")).
-        Match(bs)
+    matcher := funbit.NewMatcher()
+    funbit.Integer(matcher, &matchedSize, funbit.WithSize(8))
+    funbit.RegisterVariable(matcher, "size", &matchedSize)
+    funbit.Binary(matcher, &matchedData, funbit.WithDynamicSizeExpression("size"))
+    
+    results, err := funbit.Match(matcher, bs)
     
     if err != nil {
         panic(err)
@@ -130,33 +130,33 @@ package main
 
 import (
     "fmt"
-    "github.com/funvibe/funbit/internal/builder"
-    "github.com/funvibe/funbit/internal/matcher"
-    "github.com/funvibe/funbit/internal/bitstring"
+    "github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
     // Construct a simple IP-like packet
-    packet, err := builder.NewBuilder().
-        AddInteger(4, builder.WithSize(4)).                    // Version
-        AddInteger(5, builder.WithSize(4)).                    // Header length
-        AddInteger(20, builder.WithSize(16), builder.WithEndianness("big")). // Total length
-        AddInteger(0x1234, builder.WithSize(16)).              // ID
-        AddBinary([]byte("payload data")).                     // Payload
-        Build()
+    builder := funbit.NewBuilder()
+    funbit.AddInteger(builder, 4, funbit.WithSize(4))                    // Version
+    funbit.AddInteger(builder, 5, funbit.WithSize(4))                    // Header length
+    funbit.AddInteger(builder, 20, funbit.WithSize(16), funbit.WithEndianness("big")) // Total length
+    funbit.AddInteger(builder, 0x1234, funbit.WithSize(16))              // ID
+    funbit.AddBinary(builder, []byte("payload data"))                     // Payload
+    
+    packet, err := funbit.Build(builder)
     
     // Parse the packet
     var version, headerLen uint8
     var totalLength, id uint16
     var payload []byte
     
-    results, err := matcher.NewMatcher().
-        Integer(&version, matcher.WithSize(4)).
-        Integer(&headerLen, matcher.WithSize(4)).
-        Integer(&totalLength, matcher.WithSize(16), matcher.WithEndianness("big")).
-        Integer(&id, matcher.WithSize(16)).
-        Binary(&payload).
-        Match(packet)
+    matcher := funbit.NewMatcher()
+    funbit.Integer(matcher, &version, funbit.WithSize(4))
+    funbit.Integer(matcher, &headerLen, funbit.WithSize(4))
+    funbit.Integer(matcher, &totalLength, funbit.WithSize(16), funbit.WithEndianness("big"))
+    funbit.Integer(matcher, &id, funbit.WithSize(16))
+    funbit.Binary(matcher, &payload)
+    
+    results, err := funbit.Match(matcher, packet)
     
     if err != nil {
         panic(err)
@@ -174,26 +174,25 @@ package main
 
 import (
     "fmt"
-    "github.com/funvibe/funbit/internal/builder"
-    "github.com/funvibe/funbit/internal/matcher"
-    "github.com/funvibe/funbit/internal/bitstring"
+    "github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
-    // UTF-8 encoding
+    // UTF-8 encoding using utility functions
     text := "Hello, 世界!"
     
-    bs, err := builder.NewBuilder().
-        AddUTF(text, builder.WithType("utf8")).
-        Build()
+    utf8Data, err := funbit.EncodeUTF8(text)
+    if err != nil {
+        panic(err)
+    }
     
-    // UTF-8 decoding
-    var decodedText string
+    builder := funbit.NewBuilder()
+    funbit.AddBinary(builder, utf8Data)
     
-    results, err := matcher.NewMatcher().
-        UTF(&decodedText, matcher.WithType("utf8")).
-        Match(bs)
+    bs, err := funbit.Build(builder)
     
+    // UTF-8 decoding using utility functions
+    decodedText, err := funbit.DecodeUTF8(utf8Data)
     if err != nil {
         panic(err)
     }
@@ -206,15 +205,19 @@ func main() {
 
 ### Builder API
 
-#### Construction Methods
+#### Factory Functions
 - `NewBuilder()` - Create a new builder instance
-- `AddInteger(value interface{}, options ...SegmentOption)` - Add integer segment
-- `AddFloat(value float64, options ...SegmentOption)` - Add float segment
-- `AddBinary(data []byte, options ...SegmentOption)` - Add binary segment
-- `AddUTF(value string, options ...SegmentOption)` - Add UTF segment
-- `AddBitstring(value *BitString, options ...SegmentOption)` - Add bitstring segment
-- `AddSegment(segment *Segment)` - Add custom segment
-- `Build()` - Build the final bitstring
+
+#### Construction Functions
+- `AddInteger(builder *Builder, value interface{}, options ...SegmentOption)` - Add integer segment
+- `AddFloat(builder *Builder, value float64, options ...SegmentOption)` - Add float segment
+- `AddBinary(builder *Builder, data []byte, options ...SegmentOption)` - Add binary segment
+- `AddUTF8(builder *Builder, value string)` - Add UTF-8 segment
+- `AddUTF16(builder *Builder, value string, options ...SegmentOption)` - Add UTF-16 segment
+- `AddUTF32(builder *Builder, value string, options ...SegmentOption)` - Add UTF-32 segment
+- `AddBitstring(builder *Builder, value *BitString, options ...SegmentOption)` - Add bitstring segment
+- `AddSegment(builder *Builder, segment Segment)` - Add custom segment
+- `Build(builder *Builder)` - Build the final bitstring
 
 #### Segment Options
 - `WithSize(size uint)` - Set segment size
@@ -227,17 +230,22 @@ func main() {
 
 ### Matcher API
 
-#### Matching Methods
+#### Factory Functions
 - `NewMatcher()` - Create a new matcher instance
-- `Integer(variable interface{}, options ...SegmentOption)` - Match integer
-- `Float(variable *float64, options ...SegmentOption)` - Match float
-- `Binary(variable *[]byte, options ...SegmentOption)` - Match binary
-- `UTF(variable *string, options ...SegmentOption)` - Match UTF
-- `Bitstring(variable **BitString, options ...SegmentOption)` - Match bitstring
-- `RestBinary(variable *[]byte)` - Match remaining binary data
-- `RestBitstring(variable **BitString)` - Match remaining bitstring data
-- `RegisterVariable(name string, variable interface{})` - Register variable for dynamic sizing
-- `Match(bitstring *BitString)` - Execute pattern matching
+
+#### Matching Functions
+- `Integer(matcher *Matcher, variable interface{}, options ...SegmentOption)` - Match integer
+- `Float(matcher *Matcher, variable *float64, options ...SegmentOption)` - Match float
+- `Binary(matcher *Matcher, variable *[]byte, options ...SegmentOption)` - Match binary
+- `UTF(matcher *Matcher, variable *string, options ...SegmentOption)` - Match UTF
+- `UTF8(matcher *Matcher, variable *string)` - Match UTF-8
+- `UTF16(matcher *Matcher, variable *string, options ...SegmentOption)` - Match UTF-16
+- `UTF32(matcher *Matcher, variable *string, options ...SegmentOption)` - Match UTF-32
+- `Bitstring(matcher *Matcher, variable **BitString, options ...SegmentOption)` - Match bitstring
+- `RestBinary(matcher *Matcher, variable *[]byte)` - Match remaining binary data
+- `RestBitstring(matcher *Matcher, variable **BitString)` - Match remaining bitstring data
+- `RegisterVariable(matcher *Matcher, name string, variable interface{})` - Register variable for dynamic sizing
+- `Match(matcher *Matcher, bitstring *BitString)` - Execute pattern matching
 
 ### Core Types
 
@@ -257,6 +265,19 @@ func main() {
 - `TypeBitstring` - Arbitrary bit length data
 - `TypeUTF8/TypeUTF16/TypeUTF32` - Unicode encoded strings
 - `TypeRestBinary/TypeRestBitstring` - Remaining data
+
+#### Utility Functions
+- `EncodeUTF8(value string) ([]byte, error)` - Encode string to UTF-8
+- `DecodeUTF8(data []byte) (string, error)` - Decode UTF-8 to string
+- `EncodeUTF16(value string, endianness string) ([]byte, error)` - Encode string to UTF-16
+- `DecodeUTF16(data []byte, endianness string) (string, error)` - Decode UTF-16 to string
+- `EncodeUTF32(value string, endianness string) ([]byte, error)` - Encode string to UTF-32
+- `DecodeUTF32(data []byte, endianness string) (string, error)` - Decode UTF-32 to string
+- `ExtractBits(data []byte, start, length uint) ([]byte, error)` - Extract bits from data
+- `CountBits(data []byte) uint` - Count set bits in data
+- `IntToBits(value int64, size uint, signed bool) ([]byte, error)` - Convert integer to bits
+- `BitsToInt(data []byte, signed bool) (int64, error)` - Convert bits to integer
+- `GetNativeEndianness() string` - Get system endianness
 
 ## Supported Types and Specifiers
 
@@ -286,10 +307,22 @@ type BitStringError struct {
 ```
 
 Common error codes:
-- `INVALID_SIZE` - Invalid segment size
-- `INVALID_TYPE` - Unsupported segment type
-- `INSUFFICIENT_BITS` - Not enough bits for operation
-- `TYPE_MISMATCH` - Type conversion error
+- `ErrInvalidSize` - Invalid segment size
+- `ErrInvalidType` - Unsupported segment type
+- `ErrInsufficientBits` - Not enough bits for operation
+- `ErrTypeMismatch` - Type conversion error
+- `ErrOverflow` - Integer overflow
+- `ErrSignedOverflow` - Signed integer overflow
+- `ErrInvalidEndianness` - Invalid endianness specification
+- `ErrBinarySizeRequired` - Binary segment requires size specification
+- `ErrBinarySizeMismatch` - Binary data size doesn't match specified size
+- `ErrInvalidBinaryData` - Invalid binary data type
+- `ErrInvalidBitstringData` - Invalid bitstring data
+- `ErrUTFSizeSpecified` - Size cannot be specified for UTF segments
+- `ErrInvalidUnicodeCodepoint` - Invalid Unicode code point
+- `ErrInvalidSegment` - Invalid segment configuration
+- `ErrInvalidUnit` - Invalid unit value
+- `ErrInvalidFloatSize` - Invalid float size (must be 32 or 64)
 
 ## Performance Considerations
 

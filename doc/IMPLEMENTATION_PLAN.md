@@ -279,11 +279,12 @@ funbit/
 ```go
 func BenchmarkConstruction(b *testing.B) {
     for i := 0; i < b.N; i++ {
-        bs, err := NewBuilder().
-            AddInteger(1).
-            AddInteger(17).
-            AddInteger(42).
-            Build()
+        builder := NewBuilder()
+        AddInteger(builder, 1)
+        AddInteger(builder, 17)
+        AddInteger(builder, 42)
+        
+        bs, err := Build(builder)
         if err != nil {
             b.Fatal(err)
         }
@@ -292,21 +293,23 @@ func BenchmarkConstruction(b *testing.B) {
 }
 
 func BenchmarkMatching(b *testing.B) {
-    bs, _ := NewBuilder().
-        AddInteger(1).
-        AddInteger(17).
-        AddInteger(42).
-        Build()
+    builder := NewBuilder()
+    AddInteger(builder, 1)
+    AddInteger(builder, 17)
+    AddInteger(builder, 42)
+    
+    bs, _ := Build(builder)
     
     var a, b, c int
     
     b.ResetTimer()
     for i := 0; i < b.N; i++ {
-        results, err := NewMatcher().
-            Integer(&a).
-            Integer(&b).
-            Integer(&c).
-            Match(bs)
+        matcher := NewMatcher()
+        Integer(matcher, &a)
+        Integer(matcher, &b)
+        Integer(matcher, &c)
+        
+        results, err := Match(matcher, bs)
         if err != nil {
             b.Fatal(err)
         }
@@ -674,10 +677,10 @@ const (
 **Пример использования:**
 ```go
 // <<size:8, data:size/binary, rest/binary>>
-matcher := NewMatcher().
-    Integer(&size, WithSize(8)).
-    Binary(&data, WithDynamicSize("size")).
-    RestBinary(&rest)
+matcher := NewMatcher()
+Integer(matcher, &size, WithSize(8))
+Binary(matcher, &data, WithDynamicSize("size"))
+RestBinary(matcher, &rest)
 ```
 
 **Критерии приемки:**
@@ -707,12 +710,13 @@ matcher := NewMatcher().
 
 **Пример использования:**
 ```go
-matcher := NewMatcher().
-    Integer(&header, WithSize(16)).
-    RestBinary(&payload)    // Для binary
-matcher := NewMatcher().
-    Integer(&flags, WithSize(4)).
-    RestBitstring(&data)    // Для bitstring
+matcher := NewMatcher()
+Integer(matcher, &header, WithSize(16))
+RestBinary(matcher, &payload)    // Для binary
+
+matcher := NewMatcher()
+Integer(matcher, &flags, WithSize(4))
+RestBitstring(matcher, &data)    // Для bitstring
 ```
 
 **Критерии приемки:**
@@ -774,21 +778,21 @@ segment := Segment{
 **IPv4 Header Example:**
 ```go
 func ParseIPv4Header(data *BitString) (*IPv4Header, error) {
-    matcher := NewMatcher().
-        Integer(&version, WithSize(4)).
-        Integer(&headerLength, WithSize(4)).
-        Integer(&serviceType, WithSize(8)).
-        Integer(&totalLength, WithSize(16), WithEndianness("big")).
-        Integer(&identification, WithSize(16)).
-        Integer(&flags, WithSize(3)).
-        Integer(&fragmentOffset, WithSize(13)).
-        Integer(&ttl, WithSize(8)).
-        Integer(&protocol, WithSize(8)).
-        Integer(&checksum, WithSize(16)).
-        Integer(&srcIP, WithSize(32)).
-        Integer(&dstIP, WithSize(32))
+    matcher := NewMatcher()
+    Integer(matcher, &version, WithSize(4))
+    Integer(matcher, &headerLength, WithSize(4))
+    Integer(matcher, &serviceType, WithSize(8))
+    Integer(matcher, &totalLength, WithSize(16), WithEndianness("big"))
+    Integer(matcher, &identification, WithSize(16))
+    Integer(matcher, &flags, WithSize(3))
+    Integer(matcher, &fragmentOffset, WithSize(13))
+    Integer(matcher, &ttl, WithSize(8))
+    Integer(matcher, &protocol, WithSize(8))
+    Integer(matcher, &checksum, WithSize(16))
+    Integer(matcher, &srcIP, WithSize(32))
+    Integer(matcher, &dstIP, WithSize(32))
     
-    results, err := matcher.Match(data)
+    results, err := Match(matcher, data)
     // ...
 }
 ```
@@ -796,16 +800,16 @@ func ParseIPv4Header(data *BitString) (*IPv4Header, error) {
 **TCP Flags Example:**
 ```go
 func ParseTCPFlags(data *BitString) (*TCPFlags, error) {
-    matcher := NewMatcher().
-        Integer(&reserved, WithSize(2)).
-        Integer(&urg, WithSize(1)).
-        Integer(&ack, WithSize(1)).
-        Integer(&psh, WithSize(1)).
-        Integer(&rst, WithSize(1)).
-        Integer(&syn, WithSize(1)).
-        Integer(&fin, WithSize(1))
+    matcher := NewMatcher()
+    Integer(matcher, &reserved, WithSize(2))
+    Integer(matcher, &urg, WithSize(1))
+    Integer(matcher, &ack, WithSize(1))
+    Integer(matcher, &psh, WithSize(1))
+    Integer(matcher, &rst, WithSize(1))
+    Integer(matcher, &syn, WithSize(1))
+    Integer(matcher, &fin, WithSize(1))
     
-    results, err := matcher.Match(data)
+    results, err := Match(matcher, data)
     // ...
 }
 ```
@@ -813,20 +817,20 @@ func ParseTCPFlags(data *BitString) (*TCPFlags, error) {
 **PNG Header Example:**
 ```go
 func ParsePNGHeader(data *BitString) (*PNGHeader, error) {
-    matcher := NewMatcher().
-        Binary(&signature, WithSize(64)).  // 8 bytes
-        Integer(&chunkLength, WithSize(32), WithEndianness("big")).
-        Binary(&chunkType, WithSize(32)).
-        // IHDR data
-        Integer(&width, WithSize(32), WithEndianness("big")).
-        Integer(&height, WithSize(32), WithEndianness("big")).
-        Integer(&bitDepth, WithSize(8)).
-        Integer(&colorType, WithSize(8)).
-        Integer(&compression, WithSize(8)).
-        Integer(&filter, WithSize(8)).
-        Integer(&interlace, WithSize(8))
+    matcher := NewMatcher()
+    Binary(matcher, &signature, WithSize(64))  // 8 bytes
+    Integer(matcher, &chunkLength, WithSize(32), WithEndianness("big"))
+    Binary(matcher, &chunkType, WithSize(32))
+    // IHDR data
+    Integer(matcher, &width, WithSize(32), WithEndianness("big"))
+    Integer(matcher, &height, WithSize(32), WithEndianness("big"))
+    Integer(matcher, &bitDepth, WithSize(8))
+    Integer(matcher, &colorType, WithSize(8))
+    Integer(matcher, &compression, WithSize(8))
+    Integer(matcher, &filter, WithSize(8))
+    Integer(matcher, &interlace, WithSize(8))
     
-    results, err := matcher.Match(data)
+    results, err := Match(matcher, data)
     // ...
 }
 ```
@@ -862,10 +866,10 @@ func BuildPacket(values []int) (*BitString, error) {
     builder := NewBuilder()
     
     for _, value := range values {
-        builder.AddInteger(value, WithSize(16))
+        AddInteger(builder, value, WithSize(16))
     }
     
-    return builder.Build()
+    return Build(builder)
 }
 
 // Условное построение
@@ -873,11 +877,11 @@ func BuildMessage(withHeader bool, payload []byte) (*BitString, error) {
     builder := NewBuilder()
     
     if withHeader {
-        builder.AddInteger(0x MAGIC, WithSize(32))
+        AddInteger(builder, 0x MAGIC, WithSize(32))
     }
     
-    builder.AddBinary(payload)
-    return builder.Build()
+    AddBinary(builder, payload)
+    return Build(builder)
 }
 ```
 
@@ -932,7 +936,7 @@ const (
 **Примеры обработки ошибок:**
 ```go
 // Переполнение
-_, err := builder.AddInteger(256, WithSize(8))
+_, err := AddInteger(builder, 256, WithSize(8))
 if err != nil {
     if errors.Is(err, ErrOverflow) {
         // Обработка переполнения
@@ -940,7 +944,7 @@ if err != nil {
 }
 
 // Несовпадение паттерна
-results, err := matcher.Match(data)
+results, err := Match(matcher, data)
 if err != nil {
     if bitstringErr, ok := err.(*BitStringError); ok {
         fmt.Printf("Error %s: %s", bitstringErr.Code, bitstringErr.Message)
@@ -976,24 +980,31 @@ if err != nil {
 **Пример использования:**
 ```go
 // Вложенное конструирование
-inner1 := NewBuilder().AddInteger(1).AddInteger(2).Build()
-inner2 := NewBuilder().AddInteger(3).AddInteger(4).Build()
+innerBuilder1 := NewBuilder()
+AddInteger(innerBuilder1, 1)
+AddInteger(innerBuilder1, 2)
+inner1, _ := Build(innerBuilder1)
 
-outer := NewBuilder().
-    AddInteger(0).
-    AddBitstring(inner1).
-    AddBitstring(inner2).
-    AddInteger(5).
-    Build()
+innerBuilder2 := NewBuilder()
+AddInteger(innerBuilder2, 3)
+AddInteger(innerBuilder2, 4)
+inner2, _ := Build(innerBuilder2)
+
+outer := NewBuilder()
+AddInteger(outer, 0)
+AddBitstring(outer, inner1)
+AddBitstring(outer, inner2)
+AddInteger(outer, 5)
+outerBs, _ := Build(outer)
 
 // Вложенное сопоставление
-matcher := NewMatcher().
-    Integer(&prefix, WithSize(8)).
-    Bitstring(&inner1, WithSize(16)).
-    Bitstring(&inner2, WithSize(16)).
-    Integer(&suffix, WithSize(8))
+matcher := NewMatcher()
+Integer(matcher, &prefix, WithSize(8))
+Bitstring(matcher, &inner1, WithSize(16))
+Bitstring(matcher, &inner2, WithSize(16))
+Integer(matcher, &suffix, WithSize(8))
 
-results, err := matcher.Match(outer)
+results, err := Match(matcher, outerBs)
 ```
 
 **Критерии приемки:**

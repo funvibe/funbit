@@ -99,25 +99,25 @@ type Builder struct {
 func NewBuilder() *Builder
 
 // Add integer segment
-func (b *Builder) AddInteger(value interface{}, options ...SegmentOption) *Builder
+func AddInteger(b *Builder, value interface{}, options ...SegmentOption) *Builder
 
 // Add float segment
-func (b *Builder) AddFloat(value float64, options ...SegmentOption) *Builder
+func AddFloat(b *Builder, value float64, options ...SegmentOption) *Builder
 
 // Add binary segment
-func (b *Builder) AddBinary(data []byte, options ...SegmentOption) *Builder
+func AddBinary(b *Builder, data []byte, options ...SegmentOption) *Builder
 
 // Add UTF-8 segment
-func (b *Builder) AddUTF8(value string) *Builder
+func AddUTF8(b *Builder, value string) *Builder
 
 // Add UTF-16 segment
-func (b *Builder) AddUTF16(value string, options ...SegmentOption) *Builder
+func AddUTF16(b *Builder, value string, options ...SegmentOption) *Builder
 
 // Add UTF-32 segment
-func (b *Builder) AddUTF32(value string, options ...SegmentOption) *Builder
+func AddUTF32(b *Builder, value string, options ...SegmentOption) *Builder
 
 // Build final bitstring
-func (b *Builder) Build() (*BitString, error)
+func Build(b *Builder) (*BitString, error)
 
 // Segment options
 type SegmentOption func(*Segment)
@@ -145,17 +145,17 @@ type Matcher struct {
 
 func NewMatcher() *Matcher
 
-func (m *Matcher) Integer(variable interface{}, options ...SegmentOption) *Matcher
-func (m *Matcher) Float(variable *float64, options ...SegmentOption) *Matcher
-func (m *Matcher) Binary(variable *[]byte, options ...SegmentOption) *Matcher
-func (m *Matcher) UTF8(variable *string) *Matcher
-func (m *Matcher) UTF16(variable *string, options ...SegmentOption) *Matcher
-func (m *Matcher) UTF32(variable *string) *Matcher
+func Integer(m *Matcher, variable interface{}, options ...SegmentOption) *Matcher
+func Float(m *Matcher, variable *float64, options ...SegmentOption) *Matcher
+func Binary(m *Matcher, variable *[]byte, options ...SegmentOption) *Matcher
+func UTF8(m *Matcher, variable *string) *Matcher
+func UTF16(m *Matcher, variable *string, options ...SegmentOption) *Matcher
+func UTF32(m *Matcher, variable *string) *Matcher
 
-func (m *Matcher) Rest(variable *[]byte) *Matcher
-func (m *Matcher) RestBitstring(variable *BitString) *Matcher
+func RestBinary(m *Matcher, variable *[]byte) *Matcher
+func RestBitstring(m *Matcher, variable **BitString) *Matcher
 
-func (m *Matcher) Match(bitstring *BitString) ([]SegmentResult, error)
+func Match(m *Matcher, bitstring *BitString) ([]SegmentResult, error)
 
 // Добавить поддержку переменных размеров
 type DynamicMatcher struct {
@@ -163,20 +163,20 @@ type DynamicMatcher struct {
 }
 // Пример использования:
 // <<size:8, data:size/binary, rest/binary>>
-matcher := NewMatcher().
-    Integer(&size, WithSize(8)).
-    Binary(&data, WithDynamicSize(&size)).
-    RestBinary(&rest)
+matcher := NewMatcher()
+Integer(matcher, &size, WithSize(8))
+Binary(matcher, &data, WithDynamicSize(&size))
+RestBinary(matcher, &rest)
 
 // Добавить поддержку условий при матчинге
 type MatchCondition func(results []SegmentResult) bool
 
-func (m *Matcher) WithCondition(cond MatchCondition) *Matcher
+func WithCondition(m *Matcher, cond MatchCondition) *Matcher
 // Пример:
-matcher.Integer(&value).
-    WithCondition(func(r []SegmentResult) bool {
-        return value > 80
-    })
+Integer(matcher, &value)
+WithCondition(matcher, func(r []SegmentResult) bool {
+    return value > 80
+})
 ```
 
 ### 2.4. Поддержка типов и спецификаторов
@@ -390,11 +390,11 @@ bs, err := BuildBitString([]Segment{
 // Result: <<1, 17, 42>>
 
 // With fluent interface
-bs := NewBuilder().
-    AddInteger(1).
-    AddInteger(17).
-    AddInteger(42).
-    Build()
+builder := NewBuilder()
+AddInteger(builder, 1)
+AddInteger(builder, 17)
+AddInteger(builder, 42)
+bs, _ := Build(builder)
 
 // Реальный пример
 diskUsage := "85%"
@@ -402,11 +402,12 @@ bs := NewBitStringFromBytes([]byte(diskUsage))
 
 var percent int
 var percentSign string
-results, err := NewMatcher().
-    Integer(&percent, WithType("utf8")).
-    Binary(&percentSign, WithSize(8)).
-    RestBinary(&rest).
-    Match(bs)
+matcher := NewMatcher()
+Integer(matcher, &percent, WithType("utf8"))
+Binary(matcher, &percentSign, WithSize(8))
+RestBinary(matcher, &rest)
+
+results, err := Match(matcher, bs)
 
 if percent > 80 {
     fmt.Println("WARNING: disk usage", percent, "%")
@@ -425,12 +426,12 @@ results, err := bitstring.Match([]Segment{
 ### 7.3. Complex operations
 ```go
 // Network packet construction
-packet := NewBuilder().
-    AddInteger(version, WithSize(4)).
-    AddInteger(headerLength, WithSize(4)).
-    AddInteger(totalLength, WithSize(16), WithEndianness("big")).
-    AddBinary(payload).
-    Build()
+builder := NewBuilder()
+AddInteger(builder, version, WithSize(4))
+AddInteger(builder, headerLength, WithSize(4))
+AddInteger(builder, totalLength, WithSize(16), WithEndianness("big"))
+AddBinary(builder, payload)
+packet, _ := Build(builder)
 ```
 
 ## 8. Критерии приемки
