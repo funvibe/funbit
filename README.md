@@ -4,13 +4,12 @@ Funbit is a comprehensive Go library that provides Erlang/OTP bit syntax compati
 
 ## Features
 
-- **Complete Erlang/OTP Bit Syntax Compatibility**: Full support for Erlang's bit syntax expressions
-- **Multiple Data Types**: Integer, float, binary, bitstring, UTF-8/16/32
-- **Dynamic Sizing**: Support for variable-sized segments using expressions
-- **Endianness Support**: Big, little, and native endianness handling
-- **Fluent Interface**: Clean, chainable API for both construction and matching
-- **Type Safety**: Strong typing with comprehensive validation
-- **Performance Optimized**: Efficient bit-level operations with minimal memory overhead
+- **Erlang/OTP Bit Syntax Compatibility**: Full support for Erlang's bit syntax expressions for construction and matching.
+- **True Bit-Level Operations**: The builder operates as a true bit stream, allowing for unaligned data construction.
+- **Multiple Data Types**: Integer, float, binary, bitstring, UTF-8/16/32.
+- **Dynamic Sizing**: Support for variable-sized segments using expressions in the Matcher.
+- **Endianness Support**: Big, little, and native endianness handling for byte-aligned segments.
+- **Fluent Interface**: Clean, chainable API for both construction and matching.
 
 ## Installation
 
@@ -18,7 +17,36 @@ Funbit is a comprehensive Go library that provides Erlang/OTP bit syntax compati
 go get github.com/funvibe/funbit
 ```
 
-## Quick Start
+## Core Concepts: How Funbit Thinks
+
+To use Funbit effectively, it's crucial to understand these core principles, which may not be immediately obvious.
+
+### 1. The Builder is a True Bit Stream
+
+The `funbit.Builder` is not a segment assembler; it operates as a **true bit stream writer**. When you add a segment, its bits are appended to the stream, regardless of byte boundaries.
+
+- `builder.AddInteger(1, funbit.WithSize(1))` adds **exactly one bit**.
+- `builder.AddInteger(0, funbit.WithSize(3))` then adds **exactly three bits**.
+
+The builder does not automatically pad segments to the nearest byte. This allows for the creation of tightly packed, unaligned binary data.
+
+### 2. Concatenation Requires Re-Building
+
+Bitstrings in Funbit are immutable. You cannot "append" bits to an existing `BitString` object. To achieve concatenation, as in the Erlang expression `New = <<Old/bitstring, ...>>`, you must create a new builder, add the old bitstring as the first segment, and then add the new segments.
+
+```go
+// Correct way to concatenate
+builder := funbit.NewBuilder()
+builder.AddBitstring(oldBitstring) // Add the old bitstring first
+builder.AddInteger(newValue, funbit.WithSize(4))
+newBitstring, _ := builder.Build()
+```
+
+### 3. Endianness Applies Only to Byte-Aligned Segments
+
+The `WithEndianness` option affects segments whose total size in bits is a multiple of 8 (e.g., 16, 24, 32, 64 bits). For segments with unaligned sizes (e.g., `12` bits), the endianness specifier is ignored, and the bits are written in a big-endian fashion.
+
+## Usage Examples
 
 ### Basic Construction
 
@@ -26,325 +54,132 @@ go get github.com/funvibe/funbit
 package main
 
 import (
-    "fmt"
-    "github.com/funvibe/funbit/pkg/funbit"
+	"fmt"
+	"github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
-    // Create a simple bitstring
-    builder := funbit.NewBuilder()
-    funbit.AddInteger(builder, 1, funbit.WithSize(4))          // 4-bit integer
-    funbit.AddInteger(builder, 17, funbit.WithSize(12))        // 12-bit integer
-    funbit.AddFloat(builder, 3.14, funbit.WithSize(32))        // 32-bit float
-    funbit.AddBinary(builder, []byte("hello"))                  // Binary data
-    
-    bs, err := funbit.Build(builder)
-    
-    if err != nil {
-        panic(err)
-    }
-    
-    fmt.Printf("Constructed bitstring: %v\n", bs.ToBytes())
+	// Create a simple bitstring
+	builder := funbit.NewBuilder()
+	builder.AddInteger(1, funbit.WithSize(4))          // 4-bit integer
+	builder.AddInteger(17, funbit.WithSize(12))        // 12-bit integer
+	builder.AddFloat(3.14, funbit.WithSize(32))        // 32-bit float
+	builder.AddBinary([]byte("hello"))                 // Binary data
+	
+	bs, err := builder.Build()
+	if err != nil {
+		panic(err)
+	}
+	
+	fmt.Printf("Constructed bitstring: %x\n", bs.ToBytes())
 }
 ```
 
-### Basic Pattern Matching
+### Advanced: Unaligned Data and Concatenation
+
+This example demonstrates how to correctly build a bitstring by iteratively adding unaligned, 1-bit flags. This is the correct pattern for `New = <<Old/bitstring, NewBit:1>>`.
 
 ```go
 package main
 
 import (
-    "fmt"
-    "github.com/funvibe/funbit/pkg/funbit"
+	"fmt"
+	"github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
-    // Create a bitstring to match against
-    bs := funbit.NewBitStringFromBytes([]byte{0x12, 0x34, 0x56, 0x78})
+	flags := []bool{true, false, true} // We want to build the bit sequence 101
+
+	// Start with an empty bitstring
+	currentBitstring, _ := funbit.NewBuilder().Build()
+
+	fmt.Printf("Start: len=%d bits, data=%x\n", currentBitstring.Length(), currentBitstring.ToBytes())
+
+	for i, flag := range flags {
+		// To concatenate, create a new builder for each step
+		builder := funbit.NewBuilder()
+
+		// 1. Add the previous bitstring as the first segment
+		builder.AddBitstring(currentBitstring)
+
+		// 2. Add the new 1-bit flag
+		var bit uint = 0
+		if flag {
+			bit = 1
+		}
+		builder.AddInteger(bit, funbit.WithSize(1))
+
+		// 3. Build the new, longer bitstring
+		currentBitstring, _ = builder.Build()
+		
+		fmt.Printf("Step %d: Added bit %d, new len=%d bits, data=%x\n", i+1, bit, currentBitstring.Length(), currentBitstring.ToBytes())
+	}
     
-    var a, b uint8
-    var c uint16
-    
-    // Match pattern against bitstring
-    matcher := funbit.NewMatcher()
-    funbit.Integer(matcher, &a, funbit.WithSize(8))           // Match 8-bit integer
-    funbit.Integer(matcher, &b, funbit.WithSize(8))           // Match 8-bit integer
-    funbit.Integer(matcher, &c, funbit.WithSize(16))          // Match 16-bit integer
-    
-    results, err := funbit.Match(matcher, bs)
-    
-    if err != nil {
-        panic(err)
-    }
-    
-    fmt.Printf("Matched: a=%d, b=%d, c=%d\n", a, b, c)
+    // Final result is 3 bits long, stored in a single byte: 10100000 (0xA8)
+	fmt.Printf("Final: len=%d bits, data=%x\n", currentBitstring.Length(), currentBitstring.ToBytes())
 }
 ```
 
-## Advanced Usage
-
-### Dynamic Sizing
+### Pattern Matching with Endianness
 
 ```go
 package main
 
 import (
-    "fmt"
-    "github.com/funvibe/funbit/pkg/funbit"
+	"fmt"
+	"github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
-    // Construction with dynamic sizing
-    size := uint(5)
-    data := []byte{1, 2, 3, 4, 5}
-    
-    builder := funbit.NewBuilder()
-    funbit.AddInteger(builder, size, funbit.WithSize(8))               // Size field
-    funbit.AddBinary(builder, data, funbit.WithDynamicSize(&size))     // Data with dynamic size
-    
-    bs, err := funbit.Build(builder)
-    
-    // Matching with dynamic sizing
-    var matchedSize uint
-    var matchedData []byte
-    
-    matcher := funbit.NewMatcher()
-    funbit.Integer(matcher, &matchedSize, funbit.WithSize(8))
-    funbit.RegisterVariable(matcher, "size", &matchedSize)
-    funbit.Binary(matcher, &matchedData, funbit.WithDynamicSizeExpression("size"))
-    
-    results, err := funbit.Match(matcher, bs)
-    
-    if err != nil {
-        panic(err)
-    }
-    
-    fmt.Printf("Dynamic match: size=%d, data=%v\n", matchedSize, matchedData)
-}
-```
+	// 1. Construct a 16-bit little-endian integer (0x1234)
+	builder := funbit.NewBuilder()
+	val := uint16(0x1234)
+	builder.AddInteger(val, funbit.WithSize(16), funbit.WithEndianness("little"))
+	bs, _ := builder.Build()
 
-### Network Packet Example
+	// In memory, this will be [0x34, 0x12]
+	fmt.Printf("Little-endian bytes: %x\n", bs.ToBytes())
 
-```go
-package main
+	// 2. Match the little-endian integer
+	var matchedVal uint16
+	matcher := funbit.NewMatcher()
+	matcher.Integer(&matchedVal, funbit.WithSize(16), funbit.WithEndianness("little"))
+	
+	_, err := matcher.Match(bs)
+	if err != nil {
+		panic(err)
+	}
 
-import (
-    "fmt"
-    "github.com/funvibe/funbit/pkg/funbit"
-)
+	fmt.Printf("Matched value: 0x%x\n", matchedVal)
 
-func main() {
-    // Construct a simple IP-like packet
-    builder := funbit.NewBuilder()
-    funbit.AddInteger(builder, 4, funbit.WithSize(4))                    // Version
-    funbit.AddInteger(builder, 5, funbit.WithSize(4))                    // Header length
-    funbit.AddInteger(builder, 20, funbit.WithSize(16), funbit.WithEndianness("big")) // Total length
-    funbit.AddInteger(builder, 0x1234, funbit.WithSize(16))              // ID
-    funbit.AddBinary(builder, []byte("payload data"))                     // Payload
-    
-    packet, err := funbit.Build(builder)
-    
-    // Parse the packet
-    var version, headerLen uint8
-    var totalLength, id uint16
-    var payload []byte
-    
-    matcher := funbit.NewMatcher()
-    funbit.Integer(matcher, &version, funbit.WithSize(4))
-    funbit.Integer(matcher, &headerLen, funbit.WithSize(4))
-    funbit.Integer(matcher, &totalLength, funbit.WithSize(16), funbit.WithEndianness("big"))
-    funbit.Integer(matcher, &id, funbit.WithSize(16))
-    funbit.Binary(matcher, &payload)
-    
-    results, err := funbit.Match(matcher, packet)
-    
-    if err != nil {
-        panic(err)
-    }
-    
-    fmt.Printf("Packet: version=%d, headerLen=%d, totalLength=%d, id=%04x, payload=%s\n",
-        version, headerLen, totalLength, id, string(payload))
-}
-```
-
-### UTF Encoding
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/funvibe/funbit/pkg/funbit"
-)
-
-func main() {
-    // UTF-8 encoding using utility functions
-    text := "Hello, 世界!"
-    
-    utf8Data, err := funbit.EncodeUTF8(text)
-    if err != nil {
-        panic(err)
-    }
-    
-    builder := funbit.NewBuilder()
-    funbit.AddBinary(builder, utf8Data)
-    
-    bs, err := funbit.Build(builder)
-    
-    // UTF-8 decoding using utility functions
-    decodedText, err := funbit.DecodeUTF8(utf8Data)
-    if err != nil {
-        panic(err)
-    }
-    
-    fmt.Printf("UTF-8: '%s' -> %v -> '%s'\n", text, bs.ToBytes(), decodedText)
+	// NOTE: Endianness only applies to segments with a size that is a multiple of 8.
 }
 ```
 
 ## API Reference
 
+(This section can be expanded, but the examples above cover the most critical usage patterns.)
+
 ### Builder API
-
-#### Factory Functions
-- `NewBuilder()` - Create a new builder instance
-
-#### Construction Functions
-- `AddInteger(builder *Builder, value interface{}, options ...SegmentOption)` - Add integer segment
-- `AddFloat(builder *Builder, value float64, options ...SegmentOption)` - Add float segment
-- `AddBinary(builder *Builder, data []byte, options ...SegmentOption)` - Add binary segment
-- `AddUTF8(builder *Builder, value string)` - Add UTF-8 segment
-- `AddUTF16(builder *Builder, value string, options ...SegmentOption)` - Add UTF-16 segment
-- `AddUTF32(builder *Builder, value string, options ...SegmentOption)` - Add UTF-32 segment
-- `AddBitstring(builder *Builder, value *BitString, options ...SegmentOption)` - Add bitstring segment
-- `AddSegment(builder *Builder, segment Segment)` - Add custom segment
-- `Build(builder *Builder)` - Build the final bitstring
-
-#### Segment Options
-- `WithSize(size uint)` - Set segment size
-- `WithType(segmentType string)` - Set segment type
-- `WithSigned(signed bool)` - Set signedness
-- `WithEndianness(endianness string)` - Set endianness
-- `WithUnit(unit uint)` - Set unit size
-- `WithDynamicSize(sizeVar *uint)` - Set dynamic size from variable
-- `WithDynamicSizeExpression(expr string)` - Set dynamic size from expression
+- `NewBuilder()`
+- `AddInteger(value interface{}, options ...SegmentOption)`
+- `AddFloat(value float64, options ...SegmentOption)`
+- `AddBinary(data []byte, options ...SegmentOption)`
+- `AddBitstring(value *BitString, options ...SegmentOption)`
+- `Build()`
 
 ### Matcher API
+- `NewMatcher()`
+- `Integer(variable interface{}, options ...SegmentOption)`
+- `Float(variable *float64, options ...SegmentOption)`
+- `Binary(variable *[]byte, options ...SegmentOption)`
+- `RestBinary(variable *[]byte)`
+- `RestBitstring(variable **BitString)`
+- `Match(bitstring *BitString)`
+- `RegisterVariable(name string, variable interface{})` for dynamic sized matching.
 
-#### Factory Functions
-- `NewMatcher()` - Create a new matcher instance
-
-#### Matching Functions
-- `Integer(matcher *Matcher, variable interface{}, options ...SegmentOption)` - Match integer
-- `Float(matcher *Matcher, variable *float64, options ...SegmentOption)` - Match float
-- `Binary(matcher *Matcher, variable *[]byte, options ...SegmentOption)` - Match binary
-- `UTF(matcher *Matcher, variable *string, options ...SegmentOption)` - Match UTF
-- `UTF8(matcher *Matcher, variable *string)` - Match UTF-8
-- `UTF16(matcher *Matcher, variable *string, options ...SegmentOption)` - Match UTF-16
-- `UTF32(matcher *Matcher, variable *string, options ...SegmentOption)` - Match UTF-32
-- `Bitstring(matcher *Matcher, variable **BitString, options ...SegmentOption)` - Match bitstring
-- `RestBinary(matcher *Matcher, variable *[]byte)` - Match remaining binary data
-- `RestBitstring(matcher *Matcher, variable **BitString)` - Match remaining bitstring data
-- `RegisterVariable(matcher *Matcher, name string, variable interface{})` - Register variable for dynamic sizing
-- `Match(matcher *Matcher, bitstring *BitString)` - Execute pattern matching
-
-### Core Types
-
-#### BitString
-- `NewBitString()` - Create empty bitstring
-- `NewBitStringFromBytes(data []byte)` - Create from bytes
-- `NewBitStringFromBits(data []byte, length uint)` - Create from bits with specific length
-- `Length() uint` - Get length in bits
-- `ToBytes() []byte` - Convert to byte slice
-- `IsEmpty() bool` - Check if empty
-- `IsBinary() bool` - Check if length is multiple of 8
-
-#### Segment Types
-- `TypeInteger` - Integer values (default 8 bits)
-- `TypeFloat` - Floating point values (16, 32, or 64 bits)
-- `TypeBinary` - Byte-aligned binary data
-- `TypeBitstring` - Arbitrary bit length data
-- `TypeUTF8/TypeUTF16/TypeUTF32` - Unicode encoded strings
-- `TypeRestBinary/TypeRestBitstring` - Remaining data
-
-#### Utility Functions
-- `EncodeUTF8(value string) ([]byte, error)` - Encode string to UTF-8
-- `DecodeUTF8(data []byte) (string, error)` - Decode UTF-8 to string
-- `EncodeUTF16(value string, endianness string) ([]byte, error)` - Encode string to UTF-16
-- `DecodeUTF16(data []byte, endianness string) (string, error)` - Decode UTF-16 to string
-- `EncodeUTF32(value string, endianness string) ([]byte, error)` - Encode string to UTF-32
-- `DecodeUTF32(data []byte, endianness string) (string, error)` - Decode UTF-32 to string
-- `ExtractBits(data []byte, start, length uint) ([]byte, error)` - Extract bits from data
-- `CountBits(data []byte) uint` - Count set bits in data
-- `IntToBits(value int64, size uint, signed bool) ([]byte, error)` - Convert integer to bits
-- `BitsToInt(data []byte, signed bool) (int64, error)` - Convert bits to integer
-- `GetNativeEndianness() string` - Get system endianness
-
-## Supported Types and Specifiers
-
-### Data Types
-- **Integer**: Signed/unsigned integers with configurable size
-- **Float**: 16/32/64-bit floating point numbers
-- **Binary**: Byte-aligned data (8-bit units)
-- **Bitstring**: Arbitrary bit-length data (1-bit units)
-- **UTF-8/16/32**: Unicode encoded strings
-
-### Specifiers
-- **Endianness**: `big`, `little`, `native`
-- **Signedness**: `signed`, `unsigned` (integers only)
-- **Unit**: 1-256 (multiplier for size)
-- **Size**: Explicit size or dynamic sizing
-
-## Error Handling
-
-The library provides detailed error information through the `BitStringError` type:
-
-```go
-type BitStringError struct {
-    Code    string      // Error code
-    Message string      // Error message
-    Context interface{} // Additional context
-}
-```
-
-Common error codes:
-- `ErrInvalidSize` - Invalid segment size
-- `ErrInvalidType` - Unsupported segment type
-- `ErrInsufficientBits` - Not enough bits for operation
-- `ErrTypeMismatch` - Type conversion error
-- `ErrOverflow` - Integer overflow
-- `ErrSignedOverflow` - Signed integer overflow
-- `ErrInvalidEndianness` - Invalid endianness specification
-- `ErrBinarySizeRequired` - Binary segment requires size specification
-- `ErrBinarySizeMismatch` - Binary data size doesn't match specified size
-- `ErrInvalidBinaryData` - Invalid binary data type
-- `ErrInvalidBitstringData` - Invalid bitstring data
-- `ErrUTFSizeSpecified` - Size cannot be specified for UTF segments
-- `ErrInvalidUnicodeCodepoint` - Invalid Unicode code point
-- `ErrInvalidSegment` - Invalid segment configuration
-- `ErrInvalidUnit` - Invalid unit value
-- `ErrInvalidFloatSize` - Invalid float size (must be 32 or 64)
-
-## Performance Considerations
-
-- **Memory Efficiency**: Minimal allocations during operations
-- **Bit-Level Operations**: Optimized for direct bit manipulation
-- **Dynamic Sizing**: Efficient expression evaluation
-- **Zero-Copy**: Where possible, avoid unnecessary data copying
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.
-
-## Acknowledgments
-
-- Inspired by Erlang/OTP's bit syntax implementation
-- Designed for compatibility with existing Erlang binary protocols
-- Optimized for Go's performance characteristics
+### Segment Options
+- `WithSize(size uint)`: Sets segment size **in bits** for `Integer`, `Float`, and `Bitstring`. For `Binary`, size is in multiples of the `Unit` (default 8 bits).
+- `WithEndianness(endianness string)`: `big`, `little`, `native`.
+- `WithSigned(signed bool)`
+- `WithUnit(unit uint)`
