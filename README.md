@@ -1,15 +1,19 @@
 # Funbit - Erlang/OTP Bit Syntax Library for Go
 
-Funbit is a comprehensive Go library that provides Erlang/OTP bit syntax compatibility for working with bitstrings and binary data. It offers a fluent interface for both constructing and pattern matching bitstrings with full support for dynamic sizing, various data types, and endianness handling.
+Funbit is a comprehensive Go library that provides Erlang/OTP bit syntax compatibility for working with bitstrings and binary data. It offers a fluent interface for both constructing and pattern matching bitstrings with full support for dynamic sizing, various data types, endianness handling, and advanced bit manipulation operations.
 
 ## Features
 
-- **Erlang/OTP Bit Syntax Compatibility**: Full support for Erlang's bit syntax expressions for construction and matching.
-- **True Bit-Level Operations**: The builder operates as a true bit stream, allowing for unaligned data construction.
-- **Multiple Data Types**: Integer, float, binary, bitstring, UTF-8/16/32.
-- **Dynamic Sizing**: Support for variable-sized segments using expressions in the Matcher.
-- **Endianness Support**: Big, little, and native endianness handling for byte-aligned segments.
-- **Fluent Interface**: Clean, chainable API for both construction and matching.
+- **Erlang/OTP Bit Syntax Compatibility**: Full support for Erlang's bit syntax expressions for construction and matching
+- **True Bit-Level Operations**: The builder operates as a true bit stream, allowing for unaligned data construction
+- **Multiple Data Types**: Integer, float, binary, bitstring, UTF-8/16/32 encoding
+- **Dynamic Sizing**: Support for variable-sized segments using expressions in the Matcher
+- **Unit Specifiers**: Advanced size control with customizable unit values (1-256 bits)
+- **Endianness Support**: Big, little, and native endianness handling
+- **Bit-Level Manipulation**: Extract, manipulate, and convert individual bits
+- **Protocol Support**: Ready for parsing real-world protocols (IPv4, TCP, PNG, etc.)
+- **UTF Encoding**: Full Unicode support with UTF-8/16/32 encoding/decoding
+- **Fluent Interface**: Clean, chainable API for both construction and matching
 
 ## Installation
 
@@ -46,140 +50,297 @@ newBitstring, _ := builder.Build()
 
 The `WithEndianness` option affects segments whose total size in bits is a multiple of 8 (e.g., 16, 24, 32, 64 bits). For segments with unaligned sizes (e.g., `12` bits), the endianness specifier is ignored, and the bits are written in a big-endian fashion.
 
-## Usage Examples
-
-### Basic Construction
+## Quick Start
 
 ```go
 package main
 
 import (
 	"fmt"
+	"log"
+
 	"github.com/funvibe/funbit/pkg/funbit"
 )
 
 func main() {
-	// Create a simple bitstring
+	// Basic Construction
 	builder := funbit.NewBuilder()
-	builder.AddInteger(1, funbit.WithSize(4))          // 4-bit integer
-	builder.AddInteger(17, funbit.WithSize(12))        // 12-bit integer
-	builder.AddFloat(3.14, funbit.WithSize(32))        // 32-bit float
-	builder.AddBinary([]byte("hello"))                 // Binary data
-	
-	bs, err := builder.Build()
+	funbit.AddInteger(builder, 42)                     // 8-bit integer (default)
+	funbit.AddInteger(builder, 17, funbit.WithSize(8)) // Explicit 8-bit integer
+	funbit.AddBinary(builder, []byte("hello"))         // Binary data
+
+	bitstring, err := funbit.Build(builder)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-	
-	fmt.Printf("Constructed bitstring: %x\n", bs.ToBytes())
-}
-```
 
-### Advanced: Unaligned Data and Concatenation
+	fmt.Printf("Built: %d bytes, %d bits\n", len(bitstring.ToBytes()), bitstring.Length())
 
-This example demonstrates how to correctly build a bitstring by iteratively adding unaligned, 1-bit flags. This is the correct pattern for `New = <<Old/bitstring, NewBit:1>>`.
+	// Pattern Matching
+	var a, b int
+	var data []byte
 
-```go
-package main
-
-import (
-	"fmt"
-	"github.com/funvibe/funbit/pkg/funbit"
-)
-
-func main() {
-	flags := []bool{true, false, true} // We want to build the bit sequence 101
-
-	// Start with an empty bitstring
-	currentBitstring, _ := funbit.NewBuilder().Build()
-
-	fmt.Printf("Start: len=%d bits, data=%x\n", currentBitstring.Length(), currentBitstring.ToBytes())
-
-	for i, flag := range flags {
-		// To concatenate, create a new builder for each step
-		builder := funbit.NewBuilder()
-
-		// 1. Add the previous bitstring as the first segment
-		builder.AddBitstring(currentBitstring)
-
-		// 2. Add the new 1-bit flag
-		var bit uint = 0
-		if flag {
-			bit = 1
-		}
-		builder.AddInteger(bit, funbit.WithSize(1))
-
-		// 3. Build the new, longer bitstring
-		currentBitstring, _ = builder.Build()
-		
-		fmt.Printf("Step %d: Added bit %d, new len=%d bits, data=%x\n", i+1, bit, currentBitstring.Length(), currentBitstring.ToBytes())
-	}
-    
-    // Final result is 3 bits long, stored in a single byte: 10100000 (0xA8)
-	fmt.Printf("Final: len=%d bits, data=%x\n", currentBitstring.Length(), currentBitstring.ToBytes())
-}
-```
-
-### Pattern Matching with Endianness
-
-```go
-package main
-
-import (
-	"fmt"
-	"github.com/funvibe/funbit/pkg/funbit"
-)
-
-func main() {
-	// 1. Construct a 16-bit little-endian integer (0x1234)
-	builder := funbit.NewBuilder()
-	val := uint16(0x1234)
-	builder.AddInteger(val, funbit.WithSize(16), funbit.WithEndianness("little"))
-	bs, _ := builder.Build()
-
-	// In memory, this will be [0x34, 0x12]
-	fmt.Printf("Little-endian bytes: %x\n", bs.ToBytes())
-
-	// 2. Match the little-endian integer
-	var matchedVal uint16
 	matcher := funbit.NewMatcher()
-	matcher.Integer(&matchedVal, funbit.WithSize(16), funbit.WithEndianness("little"))
-	
-	_, err := matcher.Match(bs)
+	funbit.Integer(matcher, &a)
+	funbit.Integer(matcher, &b, funbit.WithSize(8))
+	funbit.Binary(matcher, &data)
+
+	results, err := funbit.Match(matcher, bitstring)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
-	fmt.Printf("Matched value: 0x%x\n", matchedVal)
-
-	// NOTE: Endianness only applies to segments with a size that is a multiple of 8.
+	fmt.Printf("Matched: a=%d, b=%d, data='%s' (%d segments)\n", a, b, string(data), len(results))
 }
 ```
+
+## Advanced Examples
+
+### Unit Specifiers - Advanced Size Control
+
+```go
+// Unit specifiers control how Size * Unit = TotalBits
+builder := funbit.NewBuilder()
+funbit.AddInteger(builder, 15, funbit.WithSize(4), funbit.WithUnit(1))  // 4*1 = 4 bits
+funbit.AddInteger(builder, 1, funbit.WithSize(8), funbit.WithUnit(1))   // 8*1 = 8 bits
+bitstring, _ := funbit.Build(builder)
+
+fmt.Printf("Total: %d bits\n", bitstring.Length()) // 12 bits
+
+// Parse back with same units
+var a, b uint
+matcher := funbit.NewMatcher()
+funbit.Integer(matcher, &a, funbit.WithSize(4), funbit.WithUnit(1))
+funbit.Integer(matcher, &b, funbit.WithSize(8), funbit.WithUnit(1))
+results, _ := funbit.Match(matcher, bitstring)
+```
+
+### Dynamic Size Expressions
+
+```go
+// Create packet: <<5:8, "Hello":5/binary, "World">>
+builder := funbit.NewBuilder()
+funbit.AddInteger(builder, 5, funbit.WithSize(8))
+funbit.AddBinary(builder, []byte("Hello"), funbit.WithSize(5))
+funbit.AddBinary(builder, []byte("World"))
+packet, _ := funbit.Build(builder)
+
+// Parse with dynamic size
+var size uint
+var data, rest []byte
+matcher := funbit.NewMatcher()
+funbit.RegisterVariable(matcher, "size", &size)
+funbit.Integer(matcher, &size, funbit.WithSize(8))
+funbit.Binary(matcher, &data, funbit.WithDynamicSizeExpression("size"))
+funbit.Binary(matcher, &rest)
+results, _ := funbit.Match(matcher, packet)
+
+fmt.Printf("Size: %d, Data: '%s', Rest: '%s'\n", size, string(data), string(rest))
+```
+
+### Bit-Level Manipulation
+
+```go
+// Extract individual bits and ranges
+data := []byte{0xB4} // 10110100 in binary
+
+bit0, _ := funbit.GetBitValue(data, 0) // LSB
+bit7, _ := funbit.GetBitValue(data, 7) // MSB
+fmt.Printf("Byte 0xB4: bit0=%t, bit7=%t\n", bit0, bit7)
+
+// Extract bit range
+bits3to5, _ := funbit.ExtractBits(data, 3, 3) // bits 3,4,5
+fmt.Printf("Bits 3-5: %08b\n", bits3to5[0]>>5)
+
+// Convert between int and bits
+intVal := 42
+bits, _ := funbit.IntToBits(int64(intVal), 8, false)
+fmt.Printf("Int %d as bits: %08b\n", intVal, bits[0])
+```
+
+### Endianness Handling
+
+```go
+// Mixed endianness in single construction
+builder := funbit.NewBuilder()
+funbit.AddInteger(builder, 0x1234, funbit.WithSize(16), funbit.WithEndianness("big"))
+funbit.AddInteger(builder, 0x5678, funbit.WithSize(16), funbit.WithEndianness("little"))
+bitstring, _ := funbit.Build(builder)
+
+fmt.Printf("Mixed endian: %s\n", funbit.ToHexDump(bitstring))
+fmt.Printf("Native endianness: %s\n", funbit.GetNativeEndianness())
+```
+
+### Binary vs Bitstring Types
+
+```go
+// Binary: byte-aligned, Bitstring: bit-aligned
+builder := funbit.NewBuilder()
+funbit.AddInteger(builder, 42, funbit.WithSize(10)) // 10 bits - not byte aligned
+bitstring10, _ := funbit.Build(builder)
+
+builder2 := funbit.NewBuilder()
+funbit.AddBinary(builder2, []byte("AB")) // 16 bits - byte aligned
+binary16, _ := funbit.Build(builder2)
+
+fmt.Printf("10-bit value: IsBinary=%t\n", bitstring10.IsBinary()) // false
+fmt.Printf("16-bit binary: IsBinary=%t\n", binary16.IsBinary())   // true
+```
+
+### UTF Encoding/Decoding
+
+```go
+text := "Hello, 世界! 🚀"
+
+// UTF-8 encoding/decoding
+utf8Encoded, _ := funbit.EncodeUTF8(text)
+utf8Decoded, _ := funbit.DecodeUTF8(utf8Encoded)
+fmt.Printf("UTF-8: '%s' -> %d bytes -> '%s'\n", text, len(utf8Encoded), utf8Decoded)
+
+// UTF-16 encoding/decoding
+utf16Encoded, _ := funbit.EncodeUTF16(text, "big")
+utf16Decoded, _ := funbit.DecodeUTF16(utf16Encoded, "big")
+fmt.Printf("UTF-16: '%s' -> %d bytes -> '%s'\n", text, len(utf16Encoded), utf16Decoded)
+```
+
+### Real-World Protocol: IPv4 Header
+
+```go
+// IPv4 header data (simplified)
+ipv4Data := []byte{
+	0x45, 0x00, 0x00, 0x3C, // Version+IHL, TOS, Total Length
+	0x30, 0x39, 0x00, 0x00, // ID, Flags+Fragment Offset
+	0x40, 0x06, 0xAB, 0xCD, // TTL, Protocol, Checksum
+	0xC0, 0xA8, 0x01, 0x01, // Source IP
+	0x0A, 0x00, 0x00, 0x01, // Destination IP
+}
+
+packet := funbit.NewBitStringFromBytes(ipv4Data)
+
+// Parse IPv4 header fields
+var version, ihl, tos uint8
+var totalLen, id uint16
+var flags, fragOff uint
+var ttl, protocol uint8
+var checksum uint16
+var srcIP, dstIP uint32
+
+matcher := funbit.NewMatcher()
+funbit.Integer(matcher, &version, funbit.WithSize(4))
+funbit.Integer(matcher, &ihl, funbit.WithSize(4))
+funbit.Integer(matcher, &tos, funbit.WithSize(8))
+funbit.Integer(matcher, &totalLen, funbit.WithSize(16), funbit.WithEndianness("big"))
+funbit.Integer(matcher, &id, funbit.WithSize(16), funbit.WithEndianness("big"))
+funbit.Integer(matcher, &flags, funbit.WithSize(3))
+funbit.Integer(matcher, &fragOff, funbit.WithSize(13))
+funbit.Integer(matcher, &ttl, funbit.WithSize(8))
+funbit.Integer(matcher, &protocol, funbit.WithSize(8))
+funbit.Integer(matcher, &checksum, funbit.WithSize(16), funbit.WithEndianness("big"))
+funbit.Integer(matcher, &srcIP, funbit.WithSize(32), funbit.WithEndianness("big"))
+funbit.Integer(matcher, &dstIP, funbit.WithSize(32), funbit.WithEndianness("big"))
+
+results, _ := funbit.Match(matcher, packet)
+fmt.Printf("IPv4 parsed: Version=%d, TTL=%d, Protocol=%d\n", version, ttl, protocol)
+```
+
+## Erlang Bit Syntax Equivalents
+
+Funbit provides direct equivalents to Erlang's bit syntax expressions:
+
+| Erlang Expression | Funbit Equivalent | Description |
+|-------------------|-------------------|-------------|
+| `<<42>>` | `AddInteger(builder, 42)` | 8-bit integer (default) |
+| `<<42:16>>` | `AddInteger(builder, 42, WithSize(16))` | 16-bit integer |
+| `<<42:16/little>>` | `AddInteger(builder, 42, WithSize(16), WithEndianness("little"))` | 16-bit little-endian |
+| `<<"hello">>` | `AddBinary(builder, []byte("hello"))` | Binary string |
+| `<<Value:Size/binary>>` | `Binary(matcher, &dest, WithDynamicSizeExpression("Size"))` | Dynamic binary size |
+| `<<Data:10/bitstring>>` | `Bitstring(matcher, &dest, WithSize(10))` | 10-bit bitstring |
+| `<<X:4/unit:1>>` | `AddInteger(builder, X, WithSize(4), WithUnit(1))` | Unit specifier (4*1=4 bits) |
+| `<<Float:32/float>>` | `AddFloat(builder, Float, WithSize(32))` | 32-bit float |
+| `<<$a, $b, $c>>` | `AddBinary(builder, []byte("abc"))` | Character bytes |
+
+## Performance Notes
+
+- **Builder is a true bit stream**: No automatic byte alignment - bits are appended exactly as specified
+- **Immutable bitstrings**: Use new builders for concatenation rather than mutation
+- **Unit specifiers**: Use unit:1 for bit-level control, unit:8 for byte-aligned operations
+- **Dynamic sizing**: Use `RegisterVariable` for variable-length field parsing
+- **Memory efficient**: Bitstrings store data in minimal byte arrays with length tracking
+
+## Contributing
+
+Funbit is designed to provide comprehensive Erlang bit syntax compatibility. Areas for contribution:
+
+- Additional protocol parsers (TCP, UDP, HTTP, etc.)
+- Performance optimizations
+- Extended UTF support
+- More comprehensive test coverage
+
+## License
+
+See LICENSE.md for licensing information.
 
 ## API Reference
 
-(This section can be expanded, but the examples above cover the most critical usage patterns.)
+### Core Types
+- `Builder` - Constructs bitstrings with fluent interface
+- `Matcher` - Pattern matches bitstrings with variable binding
+- `BitString` - Immutable bitstring representation
 
-### Builder API
-- `NewBuilder()`
-- `AddInteger(value interface{}, options ...SegmentOption)`
-- `AddFloat(value float64, options ...SegmentOption)`
-- `AddBinary(data []byte, options ...SegmentOption)`
-- `AddBitstring(value *BitString, options ...SegmentOption)`
-- `Build()`
+### Builder Functions
+- `NewBuilder() *Builder`
+- `AddInteger(b *Builder, value interface{}, options ...SegmentOption) *Builder`
+- `AddFloat(b *Builder, value interface{}, options ...SegmentOption) *Builder`
+- `AddBinary(b *Builder, value []byte, options ...SegmentOption) *Builder`
+- `AddBitstring(b *Builder, value *BitString, options ...SegmentOption) *Builder`
+- `AddSegment(b *Builder, segment Segment) *Builder`
+- `Build(b *Builder) (*BitString, error)`
 
-### Matcher API
-- `NewMatcher()`
-- `Integer(variable interface{}, options ...SegmentOption)`
-- `Float(variable *float64, options ...SegmentOption)`
-- `Binary(variable *[]byte, options ...SegmentOption)`
-- `RestBinary(variable *[]byte)`
-- `RestBitstring(variable **BitString)`
-- `Match(bitstring *BitString)`
-- `RegisterVariable(name string, variable interface{})` for dynamic sized matching.
+### Matcher Functions
+- `NewMatcher() *Matcher`
+- `Integer(m *Matcher, dest interface{}, options ...SegmentOption)`
+- `Float(m *Matcher, dest interface{}, options ...SegmentOption)`
+- `Binary(m *Matcher, dest *[]byte, options ...SegmentOption)`
+- `Bitstring(m *Matcher, dest **BitString, options ...SegmentOption)`
+- `Match(m *Matcher, bs *BitString) ([]MatchResult, error)`
+- `RegisterVariable(m *Matcher, name string, variable interface{})`
+
+### BitString Constructors
+- `NewBitString() *BitString`
+- `NewBitStringFromBytes(data []byte) *BitString`
+- `NewBitStringFromBits(data []byte, length uint) *BitString`
+
+### Utility Functions
+- `CountBits(data []byte) int` - Count set bits in byte array
+- `ToHexDump(bs *BitString) string` - Format as hex dump
+- `ToErlangFormat(bs *BitString) string` - Format as Erlang binary syntax
+- `ToBinaryString(bs *BitString) string` - Format as binary string
+- `GetBitValue(data []byte, bitIndex uint) (bool, error)` - Extract single bit
+- `ExtractBits(data []byte, startBit, numBits uint) ([]byte, error)` - Extract bit range
+- `IntToBits(value int64, size uint, signed bool) ([]byte, error)` - Convert int to bits
+- `BitsToInt(bits []byte, signed bool) (int64, error)` - Convert bits to int
+- `GetNativeEndianness() string` - Get system endianness
+
+### UTF Encoding Functions
+- `EncodeUTF8(text string) ([]byte, error)`
+- `DecodeUTF8(data []byte) (string, error)`
+- `EncodeUTF16(text string, endianness string) ([]byte, error)`
+- `DecodeUTF16(data []byte, endianness string) (string, error)`
+- `EncodeUTF32(text string, endianness string) ([]byte, error)`
+- `DecodeUTF32(data []byte, endianness string) (string, error)`
+- `ValidateUnicodeCodePoint(codePoint int) error`
 
 ### Segment Options
-- `WithSize(size uint)`: Sets segment size **in bits** for `Integer`, `Float`, and `Bitstring`. For `Binary`, size is in multiples of the `Unit` (default 8 bits).
-- `WithEndianness(endianness string)`: `big`, `little`, `native`.
-- `WithSigned(signed bool)`
-- `WithUnit(unit uint)`
+- `WithSize(size uint)` - Segment size in bits (integer/float) or units (binary)
+- `WithType(typeStr string)` - Data type: "integer", "float", "binary", "bitstring", "utf8", "utf16", "utf32"
+- `WithSigned(signed bool)` - Signed/unsigned for integer types
+- `WithEndianness(endianness string)` - "big", "little", "native"
+- `WithUnit(unit uint)` - Unit size (1-256), affects Size calculation
+- `WithDynamicSizeExpression(expr string)` - Dynamic size using variables
+
+### Constants
+- `TypeInteger`, `TypeFloat`, `TypeBinary`, `TypeBitstring`, `TypeUTF`, `TypeUTF8`, `TypeUTF16`, `TypeUTF32`
+- `EndiannessBig`, `EndiannessLittle`, `EndiannessNative`
+
+### Error Handling
+- `ConvertFunbitError(err error) error` - Convert funbit errors to standard format
