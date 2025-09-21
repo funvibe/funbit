@@ -1212,8 +1212,9 @@ func (m *Matcher) extractRemainingBits(bs *bitstringpkg.BitString, offset uint) 
 	data := bs.ToBytes()
 	byteOffset := offset / 8
 	bitOffset := offset % 8
+	bitRemainingSize := remainingSize % 8
 
-	if bitOffset == 0 {
+	if bitOffset == 0 && bitRemainingSize == 0 {
 		// Aligned case
 		return bitstringpkg.NewBitStringFromBytes(data[byteOffset:])
 	}
