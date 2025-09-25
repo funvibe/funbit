@@ -173,7 +173,7 @@ func TestEncodeFloat_FullCoverage(t *testing.T) {
 		segment3 := &bitstring.Segment{
 			Value:         float32(1.0),
 			Type:          bitstring.TypeFloat,
-			Size:          16, // Invalid size (not 32 or 64)
+			Size:          24, // Invalid size (not 16, 32, or 64)
 			SizeSpecified: true,
 		}
 		err = encodeFloat(writer3, segment3)

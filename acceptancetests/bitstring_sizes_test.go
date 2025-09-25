@@ -349,7 +349,7 @@ func TestBitstringSizes_SizeValidation(t *testing.T) {
 			value:       1,
 			size:        65,
 			expectError: true,
-			errorMsg:    "size too large",
+			errorMsg:    "effective size too large",
 		},
 		{
 			name:        "Value too large for size",

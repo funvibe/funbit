@@ -105,6 +105,11 @@ func (b *Builder) AddInteger(value interface{}, options ...bitstring.SegmentOpti
 		}
 	}
 
+	// Set default unit for integer if not specified
+	if segment.Unit == 0 {
+		segment.Unit = 1
+	}
+
 	b.segments = append(b.segments, segment)
 	return b
 }
@@ -204,6 +209,11 @@ func (b *Builder) AddFloat(value interface{}, options ...bitstring.SegmentOption
 		}
 		// Mark SizeSpecified as false when using default size
 		segment.SizeSpecified = false
+	}
+
+	// Set default unit for float if not specified
+	if segment.Unit == 0 {
+		segment.Unit = 1
 	}
 
 	b.segments = append(b.segments, segment)
@@ -356,8 +366,18 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 	if size == 0 {
 		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "size must be positive")
 	}
-	if size > 64 {
-		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "size too large")
+
+	// Use default unit if not specified
+	unit := segment.Unit
+	if unit == 0 {
+		unit = 1
+	}
+
+	// Calculate effective size using unit
+	effectiveSize := size * unit
+
+	if effectiveSize == 0 || effectiveSize > 64 {
+		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "effective size too large")
 	}
 
 	value, err := toUint64(segment.Value)
@@ -365,15 +385,15 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 		return err
 	}
 
-	// Check for overflow based on signedness
-	if size < 64 {
+	// Check for overflow based on effective size
+	if effectiveSize < 64 {
 		if segment.Signed {
-			// For signed integers, check range: -2^(size-1) to 2^(size-1)-1
+			// For signed integers, check range: -2^(effectiveSize-1) to 2^(effectiveSize-1)-1
 			if val := reflect.ValueOf(segment.Value); val.Kind() >= reflect.Int && val.Kind() <= reflect.Int64 {
 				intValue := val.Int()
-				minSigned := int64(-1) << (size - 1)
-				maxSigned := int64(1) << (size - 1)
-				maxSigned-- // 2^(size-1) - 1
+				minSigned := int64(-1) << (effectiveSize - 1)
+				maxSigned := int64(1) << (effectiveSize - 1)
+				maxSigned-- // 2^(effectiveSize-1) - 1
 
 				if intValue < minSigned || intValue > maxSigned {
 					return bitstring.NewBitStringError(bitstring.CodeSignedOverflow, "signed overflow")
@@ -381,16 +401,16 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 			} else if val.Kind() >= reflect.Uint && val.Kind() <= reflect.Uint64 {
 				// Unsigned value being encoded as signed - check positive range
 				uintValue := val.Uint()
-				maxSigned := uint64(1) << (size - 1)
-				maxSigned-- // 2^(size-1) - 1
+				maxSigned := uint64(1) << (effectiveSize - 1)
+				maxSigned-- // 2^(effectiveSize-1) - 1
 
 				if uintValue > maxSigned {
 					return bitstring.NewBitStringError(bitstring.CodeSignedOverflow, "signed overflow")
 				}
 			}
 		} else {
-			// For unsigned integers, check range: 0 to 2^size-1
-			maxValue := uint64(1) << size
+			// For unsigned integers, check range: 0 to 2^effectiveSize-1
+			maxValue := uint64(1) << effectiveSize
 			if value >= maxValue {
 				return bitstring.NewBitStringError(bitstring.CodeOverflow, "unsigned overflow")
 			}
@@ -413,7 +433,7 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 			if val.Type().Elem().Kind() == reflect.Uint8 { // []byte
 				data := val.Bytes()
 				availableBits := uint(len(data)) * 8
-				if size > availableBits {
+				if effectiveSize > availableBits {
 					return bitstring.NewBitStringError(bitstring.CodeInsufficientBits, "size too large for data")
 				}
 			}
@@ -421,14 +441,14 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 			// For non-slice values (like integers in the test), check if size is reasonable
 			// The test creates AddInteger(0, WithSize(16), WithType("bitstring"))
 			// This should trigger an error because we can't get 16 bits from integer 0
-			if size > 8 {
+			if effectiveSize > 8 {
 				return bitstring.NewBitStringError(bitstring.CodeInsufficientBits, "size too large for data")
 			}
 		}
 	}
 
 	// Truncate to the least significant bits, as per Erlang spec.
-	if size < 64 {
+	if effectiveSize < 64 {
 		if segment.Signed {
 			// For signed integers, we need to handle two's complement properly
 			// Convert negative values to their two's complement representation
@@ -436,31 +456,31 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 				intValue := val.Int()
 				if intValue < 0 {
 					// Convert negative to two's complement
-					mask := uint64(1) << size
+					mask := uint64(1) << effectiveSize
 					value = uint64(intValue) & (mask - 1)
 				} else {
 					// Positive values just get truncated
-					mask := (uint64(1) << size) - 1
+					mask := (uint64(1) << effectiveSize) - 1
 					value &= mask
 				}
 			} else {
 				// Unsigned values just get truncated
-				mask := (uint64(1) << size) - 1
+				mask := (uint64(1) << effectiveSize) - 1
 				value &= mask
 			}
 		} else {
 			// For unsigned integers, simple truncation
-			mask := (uint64(1) << size) - 1
+			mask := (uint64(1) << effectiveSize) - 1
 			value &= mask
 		}
 	}
 
 	// Handle endianness for multi-byte values
-	if size >= 8 && segment.Endianness != "" {
+	if effectiveSize >= 8 && segment.Endianness != "" {
 		// For sizes that are multiples of 8 bits (full bytes), handle endianness
-		if size%8 == 0 {
+		if effectiveSize%8 == 0 {
 			// Create byte representation in big-endian order
-			byteSize := size / 8
+			byteSize := effectiveSize / 8
 			bytes := make([]byte, byteSize)
 
 			// Fill bytes in big-endian order
@@ -495,7 +515,7 @@ func encodeInteger(w *bitWriter, segment *bitstring.Segment) error {
 	}
 
 	// For non-byte-aligned sizes or default big-endian, write as bits
-	w.writeBits(value, size)
+	w.writeBits(value, effectiveSize)
 	return nil
 }
 
@@ -586,13 +606,22 @@ func determineBitstringSize(segment *bitstring.Segment, bs *bitstring.BitString)
 		return 0, bitstring.NewBitStringError(bitstring.CodeInvalidSize, "bitstring size cannot be zero")
 	}
 
-	if size > bs.Length() {
-		return 0, bitstring.NewBitStringErrorWithContext(bitstring.CodeInsufficientBits,
-			fmt.Sprintf("bitstring data length (%d bits) is less than specified size (%d bits)", bs.Length(), size),
-			map[string]interface{}{"data_size": bs.Length(), "specified_size": size})
+	// Use default unit if not specified
+	unit := segment.Unit
+	if unit == 0 {
+		unit = 1
 	}
 
-	return size, nil
+	// Calculate effective size using unit
+	effectiveSize := size * unit
+
+	if effectiveSize > bs.Length() {
+		return 0, bitstring.NewBitStringErrorWithContext(bitstring.CodeInsufficientBits,
+			fmt.Sprintf("bitstring data length (%d bits) is less than specified effective size (%d bits)", bs.Length(), effectiveSize),
+			map[string]interface{}{"data_size": bs.Length(), "specified_size": effectiveSize})
+	}
+
+	return effectiveSize, nil
 }
 
 // writeBitstringBits writes bits from source bitstring to the writer
@@ -633,9 +662,19 @@ func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 	if size == 0 {
 		return bitstring.NewBitStringError(bitstring.CodeInvalidSize, "float size cannot be zero")
 	}
-	if size != 32 && size != 64 {
+
+	// Use default unit if not specified
+	unit := segment.Unit
+	if unit == 0 {
+		unit = 1
+	}
+
+	// Calculate effective size using unit
+	effectiveSize := size * unit
+
+	if effectiveSize != 16 && effectiveSize != 32 && effectiveSize != 64 {
 		return bitstring.NewBitStringError(bitstring.CodeInvalidFloatSize,
-			fmt.Sprintf("invalid float size: %d bits (must be 32 or 64)", size))
+			fmt.Sprintf("invalid float effective size: %d bits (must be 16, 32, or 64)", effectiveSize))
 	}
 
 	var value float64
@@ -650,8 +689,25 @@ func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 			segment.Value)
 	}
 
-	buf := make([]byte, size/8)
-	if size == 32 {
+	buf := make([]byte, effectiveSize/8)
+	switch effectiveSize {
+	case 16:
+		// 16-bit float (half precision)
+		// Convert float64 to float16 (half precision) using IEEE 754 standard
+		halfBits := float64ToFloat16Bits(value)
+
+		if segment.Endianness == bitstring.EndiannessLittle {
+			binary.LittleEndian.PutUint16(buf, halfBits)
+		} else if segment.Endianness == bitstring.EndiannessNative {
+			if endianness.GetNativeEndianness() == "little" {
+				binary.LittleEndian.PutUint16(buf, halfBits)
+			} else {
+				binary.BigEndian.PutUint16(buf, halfBits)
+			}
+		} else {
+			binary.BigEndian.PutUint16(buf, halfBits)
+		}
+	case 32:
 		bits := math.Float32bits(float32(value))
 		if segment.Endianness == bitstring.EndiannessLittle {
 			binary.LittleEndian.PutUint32(buf, bits)
@@ -664,7 +720,7 @@ func encodeFloat(w *bitWriter, segment *bitstring.Segment) error {
 		} else {
 			binary.BigEndian.PutUint32(buf, bits)
 		}
-	} else {
+	case 64:
 		bits := math.Float64bits(value)
 		if segment.Endianness == bitstring.EndiannessLittle {
 			binary.LittleEndian.PutUint64(buf, bits)
@@ -744,4 +800,66 @@ func encodeUTF(w *bitWriter, segment *bitstring.Segment) error {
 	}
 
 	return nil
+}
+
+// float64ToFloat16Bits converts a float64 value to IEEE 754 half-precision (16-bit) float bits
+func float64ToFloat16Bits(f float64) uint16 {
+	// Convert to float32 first for precision
+	f32 := float32(f)
+	bits32 := math.Float32bits(f32)
+
+	// Extract components from float32
+	sign := (bits32 >> 31) & 1
+	exp32 := (bits32 >> 23) & 0xFF
+	mant32 := bits32 & 0x7FFFFF
+
+	var sign16, exp16, mant16 uint16
+	sign16 = uint16(sign)
+
+	if exp32 == 0xFF { // Inf or NaN
+		exp16 = 0x1F
+		if mant32 != 0 {
+			mant16 = 1 // quiet NaN
+		}
+	} else if exp32 == 0 { // zero
+		exp16 = 0
+		mant16 = 0
+	} else {
+		// Convert exponent: float32 bias 127, float16 bias 15
+		exp16 = uint16(exp32 - 127 + 15)
+
+		// Check for exponent overflow/underflow
+		if exp16 >= 0x1F { // overflow to inf
+			exp16 = 0x1F
+			mant16 = 0
+		} else if exp16 <= 0 { // underflow to zero or denormal
+			exp16 = 0
+			mant16 = 0
+		} else {
+			// Convert mantissa: float32 has 23 bits, float16 has 10
+			// Direct conversion without adding implicit bit (it's already accounted for in IEEE format)
+			mant16 = uint16(mant32 >> 13)
+
+			// Round to nearest (round half to even)
+			roundBit := mant32 & 0x1000
+			stickyBits := mant32 & 0x0FFF
+
+			if roundBit != 0 {
+				if stickyBits != 0 || (mant16&1) != 0 {
+					mant16++
+					// Check for mantissa overflow
+					if mant16 >= 0x400 {
+						mant16 = 0
+						exp16++
+						if exp16 >= 0x1F {
+							exp16 = 0x1F
+							mant16 = 0
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return sign16<<15 | exp16<<10 | mant16
 }

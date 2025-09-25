@@ -653,7 +653,7 @@ func (m *Matcher) extractFloat(bs *bitstringpkg.BitString, offset, size uint, en
 
 	switch size {
 	case 16:
-		// 16-bit float (half precision)
+		// 16-bit float (half precision) - proper IEEE 754 conversion
 		var bits uint16
 		switch endiannessStr {
 		case bitstringpkg.EndiannessBig, "":
@@ -669,8 +669,31 @@ func (m *Matcher) extractFloat(bs *bitstringpkg.BitString, offset, size uint, en
 		default:
 			return 0, fmt.Errorf("unsupported endianness: %s", endiannessStr)
 		}
-		// Convert half precision to single precision (simplified)
-		float32Bits := uint32(bits) << 16
+
+		// Proper IEEE 754 half precision to single precision conversion
+		sign16 := (bits >> 15) & 1
+		exp16 := (bits >> 10) & 0x1F
+		mant16 := bits & 0x3FF
+
+		var sign32, exp32, mant32 uint32
+		sign32 = uint32(sign16)
+
+		if exp16 == 0x1F { // Inf or NaN
+			exp32 = 0xFF
+			if mant16 != 0 {
+				mant32 = 1 // NaN
+			}
+		} else if exp16 == 0 { // zero or denormal
+			exp32 = 0
+			mant32 = uint32(mant16)
+		} else {
+			// Convert exponent: float16 bias 15, float32 bias 127
+			exp32 = uint32(exp16 - 15 + 127)
+			// Convert mantissa: float16 has 10 bits, float32 has 23
+			mant32 = uint32(mant16) << 13
+		}
+
+		float32Bits := sign32<<31 | exp32<<23 | mant32
 		return float64(math.Float32frombits(float32Bits)), nil
 	case 32:
 		var bits uint32

@@ -203,19 +203,19 @@ func main() {
 	// Example 9: Unit Specifiers - Advanced Size Control
 	fmt.Println("9. Unit Specifiers - Advanced Size Control:")
 	fmt.Printf("   Unit specifiers control how Size * Unit = TotalBits\n")
-	fmt.Printf("   Integer default: unit=1, Binary default: unit=8\n\n")
+	fmt.Printf("   Unit works for both construction AND matching!\n\n")
 
 	// Erlang equivalent: <<15:4/unit:1, 1:8/unit:8>>
 	builder9 := funbit.NewBuilder()
 	funbit.AddInteger(builder9, 15, funbit.WithSize(4), funbit.WithUnit(1)) // 4*1 = 4 bits
-	funbit.AddInteger(builder9, 1, funbit.WithSize(8), funbit.WithUnit(1))  // 8*1 = 8 bits (default unit for int)
+	funbit.AddInteger(builder9, 1, funbit.WithSize(8), funbit.WithUnit(1))  // 8*1 = 8 bits
 
 	bs9, err := funbit.Build(builder9)
 	if err != nil {
 		log.Fatalf("Failed to build unit example: %v", err)
 	}
 
-	fmt.Printf("   Unit example: %d bits total\n", bs9.Length())
+	fmt.Printf("   Unit construction: %d bits total\n", bs9.Length())
 	fmt.Printf("   Hex dump: %s\n", funbit.ToHexDump(bs9))
 
 	// Parse back with same units
@@ -229,7 +229,19 @@ func main() {
 		log.Fatalf("Failed to match unit example: %v", err)
 	}
 	fmt.Printf("   Parsed: a=%d, b=%d (%d results)\n", a9, b9, len(results9))
-	fmt.Printf("   Demonstrates: Size*Unit calculation (4*1=4 bits, 8*1=8 bits)\n")
+	fmt.Printf("   Demonstrates: Size*Unit works for both Builder and Matcher!\n")
+
+	// Example with different units
+	builder9b := funbit.NewBuilder()
+	funbit.AddInteger(builder9b, 42, funbit.WithSize(2), funbit.WithUnit(8))  // 2*8 = 16 bits
+	funbit.AddFloat(builder9b, 3.14, funbit.WithSize(2), funbit.WithUnit(32)) // 2*32 = 64 bits
+
+	bs9b, err := funbit.Build(builder9b)
+	if err != nil {
+		log.Fatalf("Failed to build advanced unit example: %v", err)
+	}
+
+	fmt.Printf("   Advanced units: integer 2*8=16 bits + float 2*32=64 bits = %d bits total\n", bs9b.Length())
 	fmt.Println()
 
 	// Example 10: Dynamic Size Expressions
@@ -421,6 +433,16 @@ func main() {
 			"16-bit little-endian",
 		},
 		{
+			"<<42:2/unit:8>>",
+			"AddInteger(builder, 42, WithSize(2), WithUnit(8))",
+			"16-bit integer (2×8)",
+		},
+		{
+			"<<3.14:2/unit:32/float>>",
+			"AddFloat(builder, 3.14, WithSize(2), WithUnit(32))",
+			"64-bit float (2×32)",
+		},
+		{
 			"<<\"hello\">>",
 			"AddBinary(builder, []byte(\"hello\"))",
 			"Binary string",
@@ -435,6 +457,11 @@ func main() {
 			"Bitstring(matcher, &dest, WithSize(10))",
 			"10-bit bitstring",
 		},
+		{
+			"<<X:2/unit:8>>",
+			"Integer(matcher, &X, WithSize(2), WithUnit(8))",
+			"16-bit integer match (2×8)",
+		},
 	}
 
 	for i, ex := range examples {
@@ -448,7 +475,7 @@ func main() {
 	fmt.Printf("• Basic construction and pattern matching\n")
 	fmt.Printf("• Multiple data types (integer, float, binary, UTF)\n")
 	fmt.Printf("• Endianness control (big/little/native)\n")
-	fmt.Printf("• Unit specifiers for advanced size control\n")
+	fmt.Printf("• Unit specifiers for both construction AND matching (Size × Unit = TotalBits)\n")
 	fmt.Printf("• Dynamic size expressions with variables\n")
 	fmt.Printf("• Bit-level manipulation functions\n")
 	fmt.Printf("• Binary vs Bitstring type differences\n")

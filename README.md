@@ -6,7 +6,7 @@ Funbit is a comprehensive Go library that provides Erlang/OTP bit syntax compati
 
 - **Erlang/OTP Bit Syntax Compatibility**: Full support for Erlang's bit syntax expressions for construction and matching
 - **True Bit-Level Operations**: The builder operates as a true bit stream, allowing for unaligned data construction
-- **Multiple Data Types**: Integer, float, binary, bitstring, UTF-8/16/32 encoding
+- **Multiple Data Types**: Integer, float (16/32/64-bit), binary, bitstring, UTF-8/16/32 encoding
 - **Dynamic Sizing**: Support for variable-sized segments using expressions in the Matcher
 - **Unit Specifiers**: Advanced size control with customizable unit values (1-256 bits)
 - **Endianness Support**: Big, little, and native endianness handling
@@ -100,12 +100,22 @@ func main() {
 
 ```go
 // Unit specifiers control how Size * Unit = TotalBits
+// Works for both construction AND matching!
+
+// Construction with units
 builder := funbit.NewBuilder()
 funbit.AddInteger(builder, 15, funbit.WithSize(4), funbit.WithUnit(1))  // 4*1 = 4 bits
 funbit.AddInteger(builder, 1, funbit.WithSize(8), funbit.WithUnit(1))   // 8*1 = 8 bits
 bitstring, _ := funbit.Build(builder)
 
 fmt.Printf("Total: %d bits\n", bitstring.Length()) // 12 bits
+
+// Advanced units: Size=2, Unit=8 means 16 bits total
+builder2 := funbit.NewBuilder()
+funbit.AddInteger(builder2, 42, funbit.WithSize(2), funbit.WithUnit(8))   // 2*8 = 16 bits
+funbit.AddFloat(builder2, 3.14, funbit.WithSize(2), funbit.WithUnit(32))  // 2*32 = 64 bits
+advanced, _ := funbit.Build(builder2)
+fmt.Printf("Advanced: %d bits\n", advanced.Length()) // 80 bits
 
 // Parse back with same units
 var a, b uint
@@ -136,6 +146,33 @@ funbit.Binary(matcher, &rest)
 results, _ := funbit.Match(matcher, packet)
 
 fmt.Printf("Size: %d, Data: '%s', Rest: '%s'\n", size, string(data), string(rest))
+```
+
+### Float16 (Half Precision) for Compact Data
+
+```go
+// Float16 is useful for ML/AI models and space-constrained protocols
+builder := funbit.NewBuilder()
+
+// Note: Float16 has limited precision - some values will be approximated
+funbit.AddFloat(builder, 3.14159, funbit.WithSize(16))    // π ≈ 3.140625
+funbit.AddFloat(builder, 2.71828, funbit.WithSize(16))    // e ≈ 2.71875  
+funbit.AddFloat(builder, 1.0, funbit.WithSize(16))        // 1.0 (exact)
+funbit.AddFloat(builder, 0.5, funbit.WithSize(16))        // 0.5 (exact)
+
+weights, _ := funbit.Build(builder)
+fmt.Printf("Neural network weights: %d bits\n", weights.Length()) // 64 bits total
+
+// Parse back
+var pi, e, one, half float64
+matcher := funbit.NewMatcher()
+funbit.Float(matcher, &pi, funbit.WithSize(16))
+funbit.Float(matcher, &e, funbit.WithSize(16))
+funbit.Float(matcher, &one, funbit.WithSize(16))
+funbit.Float(matcher, &half, funbit.WithSize(16))
+
+results, _ := funbit.Match(matcher, weights)
+fmt.Printf("Parsed: π≈%.6f, e≈%.6f, 1=%.1f, 0.5=%.1f\n", pi, e, one, half)
 ```
 
 ### Bit-Level Manipulation
@@ -252,18 +289,23 @@ Funbit provides direct equivalents to Erlang's bit syntax expressions:
 | `<<42>>` | `AddInteger(builder, 42)` | 8-bit integer (default) |
 | `<<42:16>>` | `AddInteger(builder, 42, WithSize(16))` | 16-bit integer |
 | `<<42:16/little>>` | `AddInteger(builder, 42, WithSize(16), WithEndianness("little"))` | 16-bit little-endian |
+| `<<42:2/unit:8>>` | `AddInteger(builder, 42, WithSize(2), WithUnit(8))` | Unit in construction (2×8=16 bits) |
+| `<<3.14:2/unit:32/float>>` | `AddFloat(builder, 3.14, WithSize(2), WithUnit(32))` | Unit for float (2×32=64 bits) |
+| `<<3.14:16/float>>` | `AddFloat(builder, 3.14, WithSize(16))` | 16-bit half-precision float |
 | `<<"hello">>` | `AddBinary(builder, []byte("hello"))` | Binary string |
 | `<<Value:Size/binary>>` | `Binary(matcher, &dest, WithDynamicSizeExpression("Size"))` | Dynamic binary size |
 | `<<Data:10/bitstring>>` | `Bitstring(matcher, &dest, WithSize(10))` | 10-bit bitstring |
-| `<<X:4/unit:1>>` | `AddInteger(builder, X, WithSize(4), WithUnit(1))` | Unit specifier (4*1=4 bits) |
-| `<<Float:32/float>>` | `AddFloat(builder, Float, WithSize(32))` | 32-bit float |
+| `<<X:4/unit:1>>` | `Integer(matcher, &X, WithSize(4), WithUnit(1))` | Unit in matching (4×1=4 bits) |
+| `<<Float:16/float>>` | `AddFloat(builder, Float, WithSize(16))` | 16-bit half-precision float |
+| `<<Float:32/float>>` | `AddFloat(builder, Float, WithSize(32))` | 32-bit single-precision float |
+| `<<Float:64/float>>` | `AddFloat(builder, Float, WithSize(64))` | 64-bit double-precision float |
 | `<<$a, $b, $c>>` | `AddBinary(builder, []byte("abc"))` | Character bytes |
 
 ## Performance Notes
 
 - **Builder is a true bit stream**: No automatic byte alignment - bits are appended exactly as specified
 - **Immutable bitstrings**: Use new builders for concatenation rather than mutation
-- **Unit specifiers**: Use unit:1 for bit-level control, unit:8 for byte-aligned operations
+- **Unit specifiers**: Use unit:1 for bit-level control, unit:8 for byte-aligned operations (works in both Builder and Matcher)
 - **Dynamic sizing**: Use `RegisterVariable` for variable-length field parsing
 - **Memory efficient**: Bitstrings store data in minimal byte arrays with length tracking
 
@@ -331,7 +373,7 @@ See LICENSE.md for licensing information.
 - `ValidateUnicodeCodePoint(codePoint int) error`
 
 ### Segment Options
-- `WithSize(size uint)` - Segment size in bits (integer/float) or units (binary)
+- `WithSize(size uint)` - Segment size in bits (integer/float: 16/32/64 for float) or units (binary)
 - `WithType(typeStr string)` - Data type: "integer", "float", "binary", "bitstring", "utf8", "utf16", "utf32"
 - `WithSigned(signed bool)` - Signed/unsigned for integer types
 - `WithEndianness(endianness string)` - "big", "little", "native"

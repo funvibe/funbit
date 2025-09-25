@@ -211,7 +211,7 @@ func TestBuilder_encodeSegment_MissingErrorPaths(t *testing.T) {
 		segment := &bitstring.Segment{
 			Value:         float32(3.14),
 			Type:          bitstring.TypeFloat,
-			Size:          16, // Invalid float size
+			Size:          24, // Invalid float size (not 16, 32, or 64)
 			SizeSpecified: true,
 		}
 
