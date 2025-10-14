@@ -1,36 +1,36 @@
-# Funbit - Erlang/OTP Bit Syntax Library for Go
+# Funbit - Erlang/OTP Bit Syntax for Go
 
-Funbit is a comprehensive Go library that provides **full Erlang/OTP bit syntax compatibility** for working with bitstrings and binary data. It offers a fluent interface for both constructing and pattern matching bitstrings with advanced features.
+Funbit is a Go library providing Erlang/OTP bit syntax compatibility for bitstring and binary data manipulation. It includes interfaces for constructing and pattern matching bitstrings.
 
-## ✨ Key Features
+## Features
 
-- **🎯 True Erlang Compatibility**: Direct 1:1 mapping of Erlang bit syntax to Go API
-- **⚡ True Bit-Level Operations**: Operates as a genuine bit stream, not byte-aligned segments  
-- **🔢 Rich Data Types**: Integer, float (16/32/64-bit), binary, bitstring, UTF-8/16/32
-- **📐 Dynamic & Expression-Based Sizing**: Variables and arithmetic expressions (`total-6`)
-- **🔢 Unit Multipliers**: Size multiplication with `unit:N` (e.g., `32/float-unit:2` = 64-bit double)
-- **🌐 Full Endianness Support**: Big, little, and native byte ordering
-- **⚙️ Compound Specifiers**: Complex combinations (`32/big-unsigned-integer-unit:8`)
-- **🎭 String Literals in Patterns**: Constants like `"IHDR":4/binary` for protocol validation
-- **🏗️ Builder API Pattern**: Chain operations, check errors once
-- **🧠 Proper Type Semantics**: Integers display as numbers, binary as characters
-- **🛠️ Protocol-Ready**: Built for parsing real-world protocols (IPv4, TCP, PNG, etc.)
-- **🚀 High Performance**: Optimized for both construction and pattern matching
+- **Erlang Compatibility**: 1:1 mapping of Erlang bit syntax to a Go API.
+- **Bit-Level Operations**: Operates on a bit stream, not restricted to byte-aligned segments.
+- **Data Types**: Integer, float (16/32/64-bit), binary, bitstring, UTF-8/16/32.
+- **Dynamic Sizing**: Supports variables and arithmetic expressions in size fields (e.g., `total-6`).
+- **Unit Multipliers**: Allows size multiplication with `unit:N` (e.g., `32/float-unit:2` for a 64-bit double).
+- **Endianness Support**: Big, little, and native byte ordering.
+- **Compound Specifiers**: Supports combinations of specifiers (e.g., `32/big-unsigned-integer-unit:8`).
+- **String Literals in Patterns**: Allows constant string matching for protocol validation (e.g., `"IHDR":4/binary`).
+- **Builder API Pattern**: Operations are chained, with a single error check.
+- **Type Semantics**: Differentiates between integer and binary representations.
+- **Protocol Parsing**: Designed for parsing protocols such as IPv4, TCP, and PNG.
+- **Performance**: Optimized for construction and pattern matching.
 
-## ⚠️ **CRITICAL SEMANTICS - READ THIS FIRST!**
+## Core Semantics
 
-### 🎯 **Binary vs Integer Size Semantics**
+### Binary vs. Integer Size
 ```go
 // CRITICAL DIFFERENCE:
 funbit.Integer(m, &val, funbit.WithSize(32))  // 32 BITS
 funbit.Binary(m, &data, funbit.WithSize(32))  // 32 BYTES = 256 BITS!
 
 // For binary segments: WithSize(N) means N UNITS (default: bytes)
-funbit.Binary(m, &data, funbit.WithSize(4))   // 4 bytes ✅
-funbit.Binary(m, &data, funbit.WithSize(32))  // 32 bytes ❌
+funbit.Binary(m, &data, funbit.WithSize(4))   // 4 bytes
+funbit.Binary(m, &data, funbit.WithSize(32))  // 32 bytes
 ```
 
-### 🔧 **Unit Multipliers - Essential for Dynamic Sizing**
+### Unit Multipliers for Dynamic Sizing
 ```go
 // WITHOUT WithUnit(1): size*8 interpreted as BYTES, multiplied by 8!
 funbit.Binary(m, &data, funbit.WithDynamicSizeExpression("size*8"))
@@ -38,15 +38,15 @@ funbit.Binary(m, &data, funbit.WithDynamicSizeExpression("size*8"))
 
 // WITH WithUnit(1): size*8 interpreted as exact BITS
 funbit.Binary(m, &data, funbit.WithDynamicSizeExpression("size*8"), funbit.WithUnit(1))
-// size=5 → 5*8=40 bits exactly ✅
+// size=5 → 5*8=40 bits exactly
 ```
 
-### 🔤 **UTF Extraction - Erlang Semantics**
+### UTF Extraction Semantics
 ```go
 // Erlang UTF supports BOTH approaches:
 
 // 1. String encoding (entire strings)
-funbit.AddUTF8(builder, "Hello")  // Encodes full string ✅
+funbit.AddUTF8(builder, "Hello")  // Encodes full string
 
 // 2. Code point extraction (individual characters)
 funbit.UTF8(matcher, &codepoint)  // Single code point
@@ -54,20 +54,20 @@ funbit.UTF8(matcher, &codepoint)  // Single code point
 // 3. Binary extraction (for full strings)
 var bytes []byte
 funbit.RestBinary(matcher, &bytes)
-text := string(bytes)  // Full string ✅
+text := string(bytes)  // Full string
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
-### 🏗️ **Builder API Pattern**
+### Builder API Pattern
 
-Funbit uses a builder pattern for error handling:
+Funbit uses a builder pattern for deferred error handling:
 
 ```go
 // Chain operations, check error once
 builder := funbit.NewBuilder()
 funbit.AddInteger(builder, 42, funbit.WithSize(8))
-funbit.AddUTF8Codepoint(builder, 0x1F680) // 🚀 rocket emoji  
+funbit.AddUTF8Codepoint(builder, 0x1F680) // rocket emoji
 funbit.AddFloat(builder, 3.14, funbit.WithSize(32))
 
 bitstring, err := funbit.Build(builder) // Error checked once
@@ -77,15 +77,15 @@ if err != nil {
 
 // Traditional approach:
 // if err := AddInteger(...); err != nil { return err }
-// if err := AddUTF8Codepoint(...); err != nil { return err } 
+// if err := AddUTF8Codepoint(...); err != nil { return err }
 // if err := AddFloat(...); err != nil { return err }
 ```
 
-**Key Benefits:**
-- **Chainable**: No error returns from `Add*` functions
-- **Efficient**: First error stops processing, subsequent calls ignored
-- **Clean**: Single error check at `Build()` time
-- **Consistent**: Same pattern throughout the API
+**Characteristics:**
+- **Chainable**: `Add*` functions do not return errors.
+- **Efficient**: The first error halts processing; subsequent calls are ignored.
+- **Clean**: A single error check is performed at `Build()` time.
+- **Consistent**: The pattern is used throughout the API.
 
 ### Installation
 
@@ -118,7 +118,7 @@ func main() {
     
     funbit.Integer(matcher, &value, funbit.WithSize(8))
     // CRITICAL: Binary size in BYTES! WithSize(5) = 5 bytes = 40 bits
-    funbit.Binary(matcher, &text, funbit.WithSize(5)) // 5 bytes ✅
+    funbit.Binary(matcher, &text, funbit.WithSize(5)) // 5 bytes
     
     results, err := funbit.Match(matcher, bitstring)
     if err == nil && len(results) > 0 {
@@ -128,7 +128,7 @@ func main() {
 }
 ```
 
-## 🏗️ Core Concepts
+## Core Concepts
 
 ### Construction vs Pattern Matching
 
@@ -150,9 +150,9 @@ funbit.Float(matcher, &pi, funbit.WithSize(32))
 results, _ := funbit.Match(matcher, bitstring)
 ```
 
-### Type Semantics (Important!)
+### Type Semantics
 
-Funbit follows Erlang semantics where **default type is integer**:
+Funbit follows Erlang semantics where the default type is integer:
 
 ```go
 // Construction
@@ -164,13 +164,13 @@ funbit.Integer(matcher, &num, funbit.WithSize(8))      // Extract as number: 42
 funbit.Binary(matcher, &char, funbit.WithSize(1))      // Extract as character: 'A' (1 byte)
 ```
 
-**Key Rule**: Same bits, different semantics based on type specifier.
+The interpretation of a bit sequence depends on the type specifier.
 
-## 🔧 Advanced Features
+## Advanced Features
 
 ### Non-byte-aligned Bitstrings
 
-True bit-level operations (not just byte-aligned):
+The library supports bit-level operations that are not restricted to byte boundaries:
 
 ```go
 // Build 7-bit value (not byte-aligned)
@@ -194,13 +194,13 @@ results, _ := funbit.Match(matcher, bitstring)
 
 ### UTF Codepoint API
 
-Clean API for single codepoints:
+The API provides functions for handling single codepoints:
 
 ```go
 // Encoding single codepoints
 builder := funbit.NewBuilder()
-funbit.AddUTF8Codepoint(builder, 0x1F680)  // 🚀 emoji
-funbit.AddUTF16Codepoint(builder, 0x1F31F, funbit.WithEndianness("big"))  // 🌟
+funbit.AddUTF8Codepoint(builder, 0x1F680)  // emoji
+funbit.AddUTF16Codepoint(builder, 0x1F31F, funbit.WithEndianness("big"))
 funbit.AddUTF32Codepoint(builder, 65)  // 'A'
 
 bitstring, err := funbit.Build(builder)
@@ -257,7 +257,7 @@ funbit.AddBinary(builder, data, funbit.WithDynamicSizeExpression("total-headerSi
 
 ### String Literals in Patterns
 
-Perfect for protocol validation:
+String literals can be used in patterns for protocol field validation:
 
 ```go
 // Validate PNG header: expect exactly "IHDR"
@@ -320,7 +320,7 @@ funbit.AddInteger(builder, 0, funbit.WithSize(1))  // Another bit
 funbit.AddInteger(builder, 3, funbit.WithSize(2))  // 2-bit value
 ```
 
-## 🌟 Real-World Examples
+## Examples
 
 ### TCP Header Parsing
 
@@ -350,7 +350,7 @@ funbit.Integer(matcher, &width, funbit.WithSize(32))
 funbit.Integer(matcher, &height, funbit.WithSize(32))
 ```
 
-## 🎯 Best Practices
+## Usage Guidelines
 
 ### 1. Understand Type Semantics
 - Use `funbit.Integer()` for numeric values (displays as numbers)
@@ -392,9 +392,9 @@ funbit.AddInteger(builder, value,
     funbit.WithUnit(8))
 ```
 
-### 6. Endianness Format (Important!)
+### 6. Endianness Format
 ```go
-// ✅ CORRECT: Use short forms
+// Use short forms
 funbit.WithEndianness("big")     // Supported
 funbit.WithEndianness("little")  // Supported  
 funbit.WithEndianness("native")  // Supported
@@ -407,7 +407,7 @@ Funbit automatically validates pattern sizes unless:
 - Pattern contains string literals (for validation)
 - Pattern contains unit multipliers (calculated dynamically)
 
-## 📋 Erlang ↔ Funbit Syntax Reference
+## Erlang to Funbit Syntax Reference
 
 | Erlang Syntax | Funbit Equivalent | Description |
 |---------------|-------------------|-------------|
@@ -424,20 +424,20 @@ Funbit automatically validates pattern sizes unless:
 | `<<Rest/binary>>` | `funbit.RestBinary(m, &rest)` | Rest pattern |
 | `<<1:3, 15:4>>` | `funbit.AddInteger(b, 1, funbit.WithSize(3))`<br>`funbit.AddInteger(b, 15, funbit.WithSize(4))` | Non-byte-aligned |
 
-**Key Differences:**
-- Funbit uses explicit builder pattern vs Erlang's literal syntax
-- Funbit requires variable registration for dynamic sizes
-- Funbit supports method chaining and error accumulation
-- Funbit provides stronger type safety with Go's type system
+**API Differences from Erlang:**
+- Funbit uses an explicit builder pattern vs Erlang's literal syntax.
+- Funbit requires variable registration for dynamic sizes.
+- Funbit supports method chaining and error accumulation.
+- Funbit provides stronger type safety with Go's type system.
 
-## 📊 Performance Notes
+## Performance
 
 - **Construction**: O(n) where n is number of segments
 - **Pattern Matching**: O(n) where n is number of segments  
 - **Memory**: Bitstrings are immutable and memory-efficient
-- **Threading**: Thread-safe for concurrent reads, builders are not thread-safe
+- **Threading**: Thread-safe for concurrent reads; builders are not thread-safe.
 
-## 🔍 Integration with Runtime Systems
+## Integration with Runtimes
 
 When integrating with language runtimes (like Lua, JavaScript):
 
@@ -452,9 +452,9 @@ if intValue >= 0 && intValue <= 255 {
 string(binaryData) // Always display as characters
 ```
 
-## 📚 More Examples
+## Additional Examples
 
-See `funbit/examples/public_api_example.go` for comprehensive examples covering:
+Refer to `funbit/examples/public_api_example.go` for examples covering:
 - Basic construction and matching
 - Data types and specifiers  
 - Endianness support
@@ -467,10 +467,10 @@ See `funbit/examples/public_api_example.go` for comprehensive examples covering:
 - Type semantics
 - Integration patterns
 
-## 🤝 Contributing
+## Contributing
 
-Contributions welcome!
+Contributions are accepted.
 
-## 📄 License
+## License
 
-MIT License - see LICENSE file for details.
+MIT License. See the LICENSE file for details.
